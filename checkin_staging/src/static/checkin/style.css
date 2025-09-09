@@ -7,7 +7,7 @@ body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-s
 .container.small { max-width: 520px; }
 h1 { margin: 0 0 16px; font-size: 40px; line-height: 1.1; }
 .logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
-.logo .fallback-title { font-family: "Stencil Std", "Gunplay", "Black Ops One", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
+.logo .fallback-title { font-family: 'AtlasStencil', "Stencil Std", "Gunplay", "Black Ops One", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
 .panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; }
 .panel.subtle { background: transparent; border-style: dashed; }
 label { display: block; font-weight: 600; margin-bottom: 6px; }
@@ -47,7 +47,14 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display:flex; align-items:center; justify-content:center; z-index: 1000; }
 .overlay-card { background:#0a0a0a; border:1px solid #333; border-radius:16px; padding:24px; text-align:center; width: min(90vw, 360px); }
 .overlay-check { font-size: 48px; color: #39FF14; margin-bottom: 8px; }
-.overlay-text { font-size: 18px; color: var(--fg); }
+.overlay-text { font-size: 22px; color: var(--fg); }
 
 /* Ensure hidden state wins over overlay's display */
 .overlay.hidden { display: none !important; }
+. @font-face {
+  font-family: 'AtlasStencil';
+  src: url('/static/fonts/STENCIL.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}

@@ -213,7 +213,7 @@ def upsert_member(cur: sqlite3.Cursor, external_id: str | None, name: str, email
         return cur.lastrowid
 
 
-def send_email(to_email: str, subject: str, body: str) -> bool:
+def send_email(to_email: str, subject: str, body: str, body_html: str | None = None) -> bool:
     host = os.environ.get("SMTP_HOST")
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
@@ -223,10 +223,20 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
         print(f"[DEV] Would send email to {to_email}: {subject}\n{body}")
         return True
     try:
-        msg = MIMEText(body, "plain")
-        msg["Subject"] = subject
-        msg["From"] = from_email
-        msg["To"] = to_email
+        if body_html:
+            from email.mime.multipart import MIMEMultipart
+            alt = MIMEMultipart('alternative')
+            alt['Subject'] = subject
+            alt['From'] = from_email
+            alt['To'] = to_email
+            alt.attach(MIMEText(body, 'plain'))
+            alt.attach(MIMEText(body_html, 'html'))
+            msg = alt
+        else:
+            msg = MIMEText(body, "plain")
+            msg["Subject"] = subject
+            msg["From"] = from_email
+            msg["To"] = to_email
         with smtplib.SMTP(host, port) as server:
             server.starttls()
             server.login(user, password)
@@ -577,7 +587,16 @@ def create_app():
             f"QR token (for manual entry if needed): {token}\n\n"
             f"– Atlas Gym"
         )
-        ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body) if email_n else True
+        body_html = f"""
+        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45;color:#111'>
+          <p>Hi {member['name']},</p>
+          <p>Here is your Atlas Gym check-in code. Keep this email or bookmark the link.</p>
+          <p><a href='{link}' style='background:#111;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none'>Open My QR Code</a></p>
+          <p style='color:#666'>Token (fallback): <code>{token}</code></p>
+          <p>– Atlas Gym</p>
+        </div>
+        """
+        ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html) if email_n else True
         return jsonify({"ok": ok})
 
     @app.get("/member/qr")

@@ -13,10 +13,27 @@
     return n.split(/\s+/)[0];
   }
 
+  function playChime() {
+    try {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880; // A5
+      o.connect(g); g.connect(ctx.destination);
+      g.gain.setValueAtTime(0.001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
+      o.start();
+      // short decay
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+      o.stop(ctx.currentTime + 0.3);
+    } catch {}
+  }
+
   function showSuccess(name) {
     overlayText.textContent = `Thanks, ${firstName(name)}, enjoy your workout!`;
     overlay.classList.remove('hidden');
-    setTimeout(() => overlay.classList.add('hidden'), 3000);
+    playChime();
+    setTimeout(() => overlay.classList.add('hidden'), 5000);
   }
 
   // Manual check-in (phone preferred; name-only tries single match search)
