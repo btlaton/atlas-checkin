@@ -4,8 +4,17 @@
   const overlay = document.getElementById('success-overlay');
   const overlayText = document.getElementById('success-text');
 
+  // Ensure overlay starts hidden
+  overlay?.classList.add('hidden');
+
+  function firstName(name) {
+    const n = (name || '').trim();
+    if (!n) return 'Member';
+    return n.split(/\s+/)[0];
+  }
+
   function showSuccess(name) {
-    overlayText.textContent = `Welcome, ${name}! Enjoy your workout.`;
+    overlayText.textContent = `Thanks, ${firstName(name)}, enjoy your workout!`;
     overlay.classList.remove('hidden');
     setTimeout(() => overlay.classList.add('hidden'), 3000);
   }
