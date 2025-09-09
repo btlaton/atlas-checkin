@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Atlas Gym Check-In</title>
+    <link rel="stylesheet" href="/static/checkin/style.css" />
+  </head>
+  <body class="kiosk">
+    <div class="container">
+      <h1 class="logo" id="logo"><span class="fallback-title">Atlas Gym Check-In</span></h1>
+
+      <div class="panel" id="scan-panel">
+        <h2>Scan Your QR</h2>
+        <div id="scan-support" class="muted"></div>
+        <div class="scan-wrap">
+          <video id="preview" playsinline muted></video>
+          <canvas id="frame" class="hidden" aria-hidden="true"></canvas>
+        </div>
+        <div class="scan-actions">
+          <button id="start-scan" type="button">Start Camera</button>
+          <button id="stop-scan" type="button" disabled>Stop</button>
+          <label class="upload-btn">
+            <input id="upload-image" type="file" accept="image/*" capture="environment" hidden />
+            <span>Scan From Photo</span>
+          </label>
+        </div>
+        <div id="scan-result" class="result" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Check-In (Manual)</h2>
+        <form id="checkin-form">
+          <div class="row">
+            <label>Email</label>
+            <input type="email" name="email" placeholder="name@example.com" />
+          </div>
+          <div class="row">
+            <label>Phone</label>
+            <input type="tel" name="phone" placeholder="(555) 555-5555" />
+          </div>
+          <div class="row">
+            <label>QR Token</label>
+            <input type="text" name="qr_token" placeholder="Paste token if available" />
+            <div class="hint muted">This is the same value encoded in your QR. Useful if camera access is unavailable.</div>
+          </div>
+          <button type="submit">Check In</button>
+        </form>
+        <div id="result" class="result" role="status" aria-live="polite"></div>
+      </div>
+
+      <div class="panel subtle">
+        <details>
+          <summary>Lost your QR? Resend it to your email</summary>
+          <form id="resend-form">
+            <div class="row">
+              <label>Email</label>
+              <input type="email" name="email" placeholder="name@example.com" required />
+            </div>
+            <button type="submit">Email Me My QR</button>
+            <div id="resend-result" class="result" role="status" aria-live="polite"></div>
+          </form>
+        </details>
+      </div>
+
+      <p class="staff-hint" id="staff-hint">Staff: triple-tap the header to unlock admin</p>
+    </div>
+
+    <script src="/static/checkin/kiosk.js"></script>
+  </body>
+  </html>
+

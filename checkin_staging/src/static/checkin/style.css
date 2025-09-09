@@ -1,0 +1,33 @@
+:root {
+  --bg: #000000; --fg: #ffffff; --muted: #c8c8c8; --accent: #ffffff; --panel: #0a0a0a;
+}
+* { box-sizing: border-box; }
+body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
+.container { max-width: 720px; margin: 32px auto; padding: 0 16px; }
+.container.small { max-width: 520px; }
+h1 { margin: 0 0 16px; font-size: 28px; }
+.logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
+.logo .fallback-title { font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase; }
+.panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; }
+.panel.subtle { background: transparent; border-style: dashed; }
+label { display: block; font-weight: 600; margin-bottom: 6px; }
+input[type="text"], input[type="email"], input[type="tel"], input[type="password"], input[type="file"] { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); }
+button { appearance: none; background: var(--accent); color: #000; border: 1px solid #333; padding: 10px 14px; font-weight: 800; border-radius: 10px; cursor: pointer; }
+.row { margin-bottom: 12px; }
+.result { margin-top: 8px; color: var(--muted); }
+.error { background: #331319; border: 1px solid #64212d; color: #ffb4c0; padding: 10px 12px; border-radius: 10px; }
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td { border-bottom: 1px solid #1d2740; padding: 8px 6px; text-align: left; }
+.qr-placeholder { border: 2px dashed #333; padding: 24px; border-radius: 12px; color: var(--muted); }
+.token-box { background: #0a0a0a; border: 1px solid #333; padding: 12px; border-radius: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.admin-header { display: flex; align-items: center; justify-content: space-between; }
+.muted { color: var(--muted); }
+.staff-hint { text-align: center; color: var(--muted); font-size: 12px; }
+.scan-wrap { position: relative; background: #0a0a0a; border: 1px solid #333; border-radius: 12px; overflow: hidden; }
+#preview { width: 100%; max-height: 320px; background: #000; display:block; }
+#frame { display:none; }
+.hidden { display:none; }
+.scan-actions { margin-top: 10px; display:flex; gap:10px; }
+.upload-btn { display: inline-flex; align-items: center; border: 1px dashed #444; padding: 8px 10px; border-radius: 10px; cursor: pointer; }
+.upload-btn span { color: var(--fg); }
+

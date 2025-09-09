@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Dashboard</title>
+    <link rel="stylesheet" href="/static/checkin/style.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header class="admin-header">
+        <h1>Admin Dashboard</h1>
+        <nav><a href="/admin/logout">Logout</a></nav>
+      </header>
+
+      <section class="panel">
+        <h2>Import Members (CSV)</h2>
+        <form id="import-form">
+          <input type="file" name="file" accept=".csv" />
+          <div style="margin:8px 0;">
+            <label><input type="checkbox" id="deactivate-missing" /> Deactivate members not present in CSV</label>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button id="btn-preview" type="button">Preview</button>
+            <button id="btn-import" type="submit">Import</button>
+          </div>
+        </form>
+        <div id="import-output" class="result"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Search Members</h2>
+        <input id="search" type="text" placeholder="Name, email, phone" />
+        <div id="search-results"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Recent Check-Ins</h2>
+        <table class="table">
+          <thead>
+            <tr><th>ID</th><th>When</th><th>Member</th><th>Method</th></tr>
+          </thead>
+          <tbody>
+            {% for ci in checkins %}
+              <tr>
+                <td>{{ ci["id"] }}</td>
+                <td>{{ ci["timestamp"] }}</td>
+                <td>{{ ci["member_name"] }}</td>
+                <td>{{ ci["method"] }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+    <script>
+      const importForm = document.getElementById('import-form');
+      const output = document.getElementById('import-output');
+      importForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(importForm);
+        const deact = document.getElementById('deactivate-missing').checked ? '1' : '0';
+        const r = await fetch(`/api/upload_csv?commit=1&deactivate_missing=${deact}`, { method: 'POST', body: formData });
+        const j = await r.json();
+        if (j.ok) {
+          output.textContent = `Imported ${j.imported}. Reactivated ${j.activated}. Deactivated ${j.deactivated}.`;
+        } else {
+          output.textContent = j.error || 'Import failed';
+        }
+      });
+
+      document.getElementById('btn-preview')?.addEventListener('click', async () => {
+        const formData = new FormData(importForm);
+        const r = await fetch('/api/import_preview', { method: 'POST', body: formData });
+        const j = await r.json();
+        if (!j.ok) { output.textContent = j.error || 'Preview failed'; return; }
+        const c = j.counts;
+        const s = j.samples;
+        output.innerHTML = `
+          <div>Rows: <b>${c.total_rows}</b></div>
+          <div>Inserts: <b>${c.inserts}</b> ${s.inserts.map(x=>x.email||x.name).slice(0,3).join(', ')}</div>
+          <div>Updates: <b>${c.updates}</b> ${s.updates.map(x=>x.email||x.name).slice(0,3).join(', ')}</div>
+          <div>Reactivations: <b>${c.reactivations}</b> ${s.reactivations.map(x=>x.email||x.name).slice(0,3).join(', ')}</div>
+          <div>Deactivate candidates: <b>${c.deactivate_candidates}</b> ${s.deactivate_candidates.map(x=>x.email||x.name).slice(0,3).join(', ')}</div>
+        `;
+      });
+
+      const searchInput = document.getElementById('search');
+      const results = document.getElementById('search-results');
+      let t;
+      searchInput?.addEventListener('input', () => {
+        clearTimeout(t);
+        t = setTimeout(async () => {
+          const q = searchInput.value.trim();
+          if (!q) { results.innerHTML = ''; return; }
+          const r = await fetch(`/api/members/search?q=${encodeURIComponent(q)}`);
+          const j = await r.json();
+          results.innerHTML = `<ul>${j.map(m => `<li>${m.name} — ${m.email_lower||''} ${m.phone_e164||''}</li>`).join('')}</ul>`;
+        }, 250);
+      });
+    </script>
+  </body>
+  </html>
+
