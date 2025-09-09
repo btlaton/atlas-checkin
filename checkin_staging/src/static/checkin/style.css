@@ -5,13 +5,13 @@
 body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
 .container { max-width: 720px; margin: 32px auto; padding: 0 16px; }
 .container.small { max-width: 520px; }
-h1 { margin: 0 0 16px; font-size: 28px; }
+h1 { margin: 0 0 16px; font-size: 40px; line-height: 1.1; }
 .logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
-.logo .fallback-title { font-family: "Stencil Std", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
+.logo .fallback-title { font-family: "Stencil Std", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
 .panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; }
 .panel.subtle { background: transparent; border-style: dashed; }
 label { display: block; font-weight: 600; margin-bottom: 6px; }
-input[type="text"], input[type="email"], input[type="tel"], input[type="password"], input[type="file"] { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); }
+input[type="text"], input[type="email"], input[type="tel"], input[type="password"], input[type="file"] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); font-size: 16px; }
 button { appearance: none; background: var(--accent); color: #000; border: 1px solid #333; padding: 12px 16px; font-weight: 800; border-radius: 10px; cursor: pointer; font-size: 16px; }
 .primary-btn { width: 100%; padding: 16px 18px; font-size: 18px; }
 .row { margin-bottom: 12px; }
@@ -24,8 +24,25 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 .admin-header { display: flex; align-items: center; justify-content: space-between; }
 .muted { color: var(--muted); }
 .staff-hint { text-align: center; color: var(--muted); font-size: 12px; }
-.scan-wrap { position: relative; background: #0a0a0a; border: 1px solid #333; border-radius: 12px; overflow: hidden; }
-#preview { width: 100%; max-height: 320px; background: #000; display:block; }
+
+/* Scanner */
+.scan-cta { display:flex; align-items:center; justify-content:center; margin: 8px 0 4px; }
+.scan-wrap { position: relative; background: #0a0a0a; border: 1px solid #333; border-radius: 12px; overflow: hidden; margin-top: 12px; }
+#preview { width: 100%; max-height: 360px; background: #000; display:block; }
 #frame { display:none; }
 .hidden { display:none; }
-.scan-actions { margin-top: 10px; display:flex; gap:10px; }
+
+/* Big circular CTA */
+.bigcircle { 
+  width: 240px; height: 240px; border-radius: 50%; 
+  display:flex; align-items:center; justify-content:center; 
+  border: 3px solid #39FF14; color: #000; background: #fff; 
+  box-shadow: 0 0 20px rgba(57,255,20,0.6), inset 0 0 10px rgba(0,0,0,0.15);
+}
+.bigcircle:hover { box-shadow: 0 0 28px rgba(57,255,20,0.75), inset 0 0 10px rgba(0,0,0,0.15); }
+
+/* Success overlay */
+.overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display:flex; align-items:center; justify-content:center; z-index: 1000; }
+.overlay-card { background:#0a0a0a; border:1px solid #333; border-radius:16px; padding:24px; text-align:center; width: min(90vw, 360px); }
+.overlay-check { font-size: 48px; color: #39FF14; margin-bottom: 8px; }
+.overlay-text { font-size: 18px; color: var(--fg); }

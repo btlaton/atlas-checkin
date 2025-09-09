@@ -13,7 +13,9 @@
       <div class="panel" id="scan-panel">
         <h2>Scan Your Member QR Code</h2>
         <div id="scan-support" class="muted"></div>
-        <button id="scan-button" class="primary-btn">Scan QR Code</button>
+        <div class="scan-cta">
+          <button id="scan-button" class="primary-btn bigcircle">Scan QR Code</button>
+        </div>
         <div class="scan-wrap hidden" id="scan-wrap">
           <video id="preview" playsinline muted></video>
           <canvas id="frame" class="hidden" aria-hidden="true"></canvas>
@@ -25,11 +27,11 @@
         <h2>Check-In (Manual)</h2>
         <form id="checkin-form">
           <div class="row">
-            <label>Name</label>
+            <label>Name <span class="muted">(or enter Phone)</span></label>
             <input type="text" name="name" placeholder="Your full name" autocomplete="name" />
           </div>
           <div class="row">
-            <label>Phone</label>
+            <label>Phone <span class="muted">(or enter Name)</span></label>
             <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" required />
           </div>
           <button type="submit">Check In</button>
@@ -41,16 +43,23 @@
         <h2>Resend My QR Code</h2>
         <form id="resend-form">
           <div class="row">
-            <label>Email (or)</label>
+            <label>Email <span class="muted">(or enter Phone)</span></label>
             <input type="email" name="email" placeholder="name@example.com" autocomplete="email" />
           </div>
           <div class="row">
-            <label>Phone</label>
+            <label>Phone <span class="muted">(or enter Email)</span></label>
             <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
           </div>
           <button type="submit">Send My QR Code</button>
           <div id="resend-result" class="result" role="status" aria-live="polite"></div>
         </form>
+      </div>
+
+      <div id="success-overlay" class="overlay hidden" role="dialog" aria-live="assertive" aria-modal="true">
+        <div class="overlay-card">
+          <div class="overlay-check">✓</div>
+          <div id="success-text" class="overlay-text">Checked in. Enjoy your workout!</div>
+        </div>
       </div>
 
       <p class="staff-hint" id="staff-hint">Staff: triple-tap the header to unlock admin</p>

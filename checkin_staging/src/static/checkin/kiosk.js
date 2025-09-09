@@ -1,27 +1,55 @@
-/* Kiosk interactions: scan QR with front camera, manual check-in (phone), resend QR */
+/* Kiosk interactions: streamlined UI, front camera default, one-of field validation, success overlay */
 (function() {
-  // Manual check-in
-  const form = document.getElementById('checkin-form');
   const result = document.getElementById('result');
+  const overlay = document.getElementById('success-overlay');
+  const overlayText = document.getElementById('success-text');
+
+  function showSuccess(name) {
+    overlayText.textContent = `Welcome, ${name}! Enjoy your workout.`;
+    overlay.classList.remove('hidden');
+    setTimeout(() => overlay.classList.add('hidden'), 3000);
+  }
+
+  // Manual check-in (phone preferred; name-only tries single match search)
+  const form = document.getElementById('checkin-form');
   form?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(form).entries());
-    const payload = { phone: data.phone || '' };
-    const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const j = await r.json();
-    result.textContent = j.ok ? `Welcome, ${j.member_name}! Enjoy your workout.` : (j.error || 'Check-in failed');
-    if (j.ok) form.reset();
+    const name = (data.name || '').trim();
+    const phone = (data.phone || '').trim();
+    if (!name && !phone) { result.textContent = 'Enter phone or name to continue.'; return; }
+
+    if (phone) {
+      const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
+      const j = await r.json();
+      if (j.ok) { showSuccess(j.member_name || 'Member'); form.reset(); } else { result.textContent = j.error || 'Check-in failed'; }
+      return;
+    }
+
+    // Name-only: attempt a single match via search
+    try {
+      const r = await fetch(`/api/members/search?q=${encodeURIComponent(name)}`);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0) { result.textContent = 'No member found. Please enter your phone.'; return; }
+      if (list.length > 1) { result.textContent = 'Multiple matches. Please enter your phone.'; return; }
+      const m = list[0];
+      if (!m.phone_e164) { result.textContent = 'Member found. Please enter your phone.'; return; }
+      const r2 = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: m.phone_e164 }) });
+      const j2 = await r2.json();
+      if (j2.ok) { showSuccess(j2.member_name || m.name || 'Member'); form.reset(); } else { result.textContent = j2.error || 'Check-in failed'; }
+    } catch { result.textContent = 'Unable to check in. Please try phone.'; }
   });
 
-  // Resend QR
+  // Resend QR (email or phone accepted)
   const rform = document.getElementById('resend-form');
   const rres = document.getElementById('resend-result');
   rform?.addEventListener('submit', async (e) => {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(rform).entries());
-    const payload = {};
-    if (data.email) payload.email = data.email;
-    if (data.phone) payload.phone = data.phone;
+    const email = (data.email || '').trim();
+    const phone = (data.phone || '').trim();
+    if (!email && !phone) { rres.textContent = 'Enter email or phone to continue.'; return; }
+    const payload = {}; if (email) payload.email = email; if (phone) payload.phone = phone;
     const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const j = await r.json();
     rres.textContent = j.ok ? 'Check your inbox for your QR code.' : (j.error || 'Unable to send QR code');
@@ -36,7 +64,7 @@
     if (taps >= 3) window.location.href = '/admin/login';
   });
 
-  // QR scanning (front camera default)
+  // QR scanning (front camera default), minimal status text
   const scanBtn = document.getElementById('scan-button');
   const scanWrap = document.getElementById('scan-wrap');
   const scanSupport = document.getElementById('scan-support');
@@ -47,24 +75,23 @@
   let mediaStream = null, rafId = null, detector = null, jsqrReady = false;
 
   async function checkSupport() {
+    scanSupport.textContent = '';
     const supported = 'BarcodeDetector' in window;
     if (supported) {
       try {
         const formats = await window.BarcodeDetector.getSupportedFormats();
         if (!formats.includes('qr_code')) throw new Error('No QR support');
         detector = new window.BarcodeDetector({ formats: ['qr_code'] });
-        scanSupport.textContent = 'Camera scanning ready.';
       } catch { await tryLoadJsQR(); }
     } else { await tryLoadJsQR(); }
   }
 
   async function tryLoadJsQR() {
-    if (window.jsQR) { jsqrReady = true; scanSupport.textContent = 'Fallback scanner enabled.'; return; }
+    if (window.jsQR) { jsqrReady = true; return; }
     await new Promise((resolve) => { const s = document.createElement('script'); s.src = '/static/checkin/jsqr.min.js'; s.onload = () => { jsqrReady = !!window.jsQR; resolve(); }; s.onerror = () => resolve(); document.head.appendChild(s); });
-    if (jsqrReady) scanSupport.textContent = 'Fallback scanner enabled.'; else {
+    if (!jsqrReady) {
       await new Promise((resolve) => { const s2 = document.createElement('script'); s2.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; s2.onload = () => { jsqrReady = !!window.jsQR; resolve(); }; s2.onerror = () => resolve(); document.head.appendChild(s2); });
-      scanSupport.textContent = jsqrReady ? 'Fallback scanner enabled.' : 'Camera scanning not supported on this device. Use manual entry.';
-      if (!jsqrReady) scanBtn.disabled = true;
+      if (!jsqrReady) { scanSupport.textContent = 'Camera scanning not supported on this device. Use manual entry.'; scanBtn.disabled = true; }
     }
   }
 
@@ -85,7 +112,13 @@
       let raw = null;
       if (detector) { const bm = await createImageBitmap(canvas); const codes = await detector.detect(bm); if (codes && codes.length) raw = codes[0].rawValue || codes[0].rawValue; }
       else if (jsqrReady) { const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height); const code = window.jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' }); if (code && code.data) raw = code.data; }
-      if (raw) { stopScan(); scanResult.textContent = 'Detected QR. Checking you in…'; const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qr_token: raw }) }); const j = await r.json(); result.textContent = j.ok ? `Welcome, ${j.member_name}! Enjoy your workout.` : (j.error || 'Check-in failed'); return; }
+      if (raw) {
+        stopScan();
+        const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qr_token: raw }) });
+        const j = await r.json();
+        if (j.ok) { showSuccess(j.member_name || 'Member'); } else { result.textContent = j.error || 'Check-in failed'; }
+        return;
+      }
     } catch {}
     rafId = requestAnimationFrame(tick);
   }
@@ -93,4 +126,3 @@
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
 })();
-
