@@ -48,3 +48,6 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 .overlay-card { background:#0a0a0a; border:1px solid #333; border-radius:16px; padding:24px; text-align:center; width: min(90vw, 360px); }
 .overlay-check { font-size: 48px; color: #39FF14; margin-bottom: 8px; }
 .overlay-text { font-size: 18px; color: var(--fg); }
+
+/* Ensure hidden state wins over overlay's display */
+.overlay.hidden { display: none !important; }
