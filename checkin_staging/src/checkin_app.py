@@ -544,17 +544,29 @@ def create_app():
 
     @app.post("/api/qr/resend")
     def api_qr_resend():
-        email = (request.json or {}).get("email") or request.form.get("email") or ""
-        email_n = normalize_email(email)
-        if not email_n:
-            return jsonify({"ok": False, "error": "Email required"}), 400
+        # Accept email and/or phone; use whichever is provided
+        payload = request.get_json(silent=True) or {}
+        email_in = (payload.get("email") or request.form.get("email") or "").strip()
+        phone_in = (payload.get("phone") or request.form.get("phone") or "").strip()
+        email_n = normalize_email(email_in) if email_in else None
+        phone_n = normalize_phone(phone_in) if phone_in else None
+        if not email_n and not phone_n:
+            return jsonify({"ok": False, "error": "Email or phone required"}), 400
+
         con = connect_db()
         cur = con.cursor()
-        cur.execute("SELECT * FROM members WHERE email_lower = ? AND status='active'", (email_n,))
-        member = cur.fetchone()
+        member = None
+        if email_n:
+            cur.execute("SELECT * FROM members WHERE email_lower = ? AND status='active'", (email_n,))
+            member = cur.fetchone()
+        if not member and phone_n:
+            cur.execute("SELECT * FROM members WHERE phone_e164 = ? AND status='active'", (phone_n,))
+            member = cur.fetchone()
         con.close()
+
         if not member:
             return jsonify({"ok": False, "error": "Member not found or inactive"}), 404
+
         token = ensure_qr_token(member)
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
@@ -565,7 +577,7 @@ def create_app():
             f"QR token (for manual entry if needed): {token}\n\n"
             f"– Atlas Gym"
         )
-        ok = send_email(email_n, "Your Atlas Gym Check-In Code", body)
+        ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body) if email_n else True
         return jsonify({"ok": ok})
 
     @app.get("/member/qr")
