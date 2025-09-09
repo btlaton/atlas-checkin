@@ -8,7 +8,8 @@ body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-s
 h1 { margin: 0 0 16px; font-size: 40px; line-height: 1.1; }
 .logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
 .logo .fallback-title { font-family: 'AtlasStencil', "Stencil Std", "Gunplay", "Black Ops One", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
-.panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; }
+.panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; box-shadow: 0 4px 18px rgba(0,0,0,0.25); }
+.panel h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: 0.3px; }
 .panel.subtle { background: transparent; border-style: dashed; }
 label { display: block; font-weight: 600; margin-bottom: 6px; }
 input[type="text"], input[type="email"], input[type="tel"], input[type="password"], input[type="file"] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); font-size: 16px; }
@@ -26,6 +27,7 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 .staff-hint { text-align: center; color: var(--muted); font-size: 12px; }
 
 /* Scanner */
+#scan-panel { border-color: #2aff8a; box-shadow: 0 0 28px rgba(57,255,20,0.18); }
 .scan-cta { display:flex; align-items:center; justify-content:center; margin: 8px 0 4px; }
 .scan-wrap { position: relative; background: #0a0a0a; border: 1px solid #333; border-radius: 12px; overflow: hidden; margin-top: 12px; }
 #preview { width: 100%; max-height: 360px; background: #000; display:block; }
@@ -35,23 +37,34 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 #scan-panel h2 { text-align: center; }
 
 /* Big circular CTA */
-.bigcircle { 
-  width: 240px; height: 240px; border-radius: 50%; 
-  display:flex; align-items:center; justify-content:center; 
-  border: 3px solid #39FF14; color: #000; background: #fff; 
-  box-shadow: 0 0 20px rgba(57,255,20,0.6), inset 0 0 10px rgba(0,0,0,0.15);
+.bigcircle {
+  width: 300px; height: 300px; border-radius: 50%;
+  display:flex; align-items:center; justify-content:center;
+  border: 4px solid #39FF14; color: #000; background: #fff;
+  box-shadow: 0 0 26px rgba(57,255,20,0.65), inset 0 0 12px rgba(0,0,0,0.15);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  position: relative;
 }
-.bigcircle:hover { box-shadow: 0 0 28px rgba(57,255,20,0.75), inset 0 0 10px rgba(0,0,0,0.15); }
+.bigcircle:hover { box-shadow: 0 0 36px rgba(57,255,20,0.85), inset 0 0 12px rgba(0,0,0,0.15); }
+.bigcircle::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%;
+  box-shadow: 0 0 0 0 rgba(57,255,20,0.45); animation: pulse-glow 2s ease-out infinite;
+}
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.45); }
+  70% { box-shadow: 0 0 0 25px rgba(57,255,20,0); }
+  100% { box-shadow: 0 0 0 0 rgba(57,255,20,0); }
+}
 
 /* Success overlay */
 .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display:flex; align-items:center; justify-content:center; z-index: 1000; }
-.overlay-card { background:#0a0a0a; border:1px solid #333; border-radius:16px; padding:24px; text-align:center; width: min(90vw, 360px); }
-.overlay-check { font-size: 48px; color: #39FF14; margin-bottom: 8px; }
-.overlay-text { font-size: 22px; color: var(--fg); }
+.overlay-card { background:#0a0a0a; border:1px solid #39FF14; border-radius:18px; padding:28px; text-align:center; width: min(90vw, 480px); box-shadow: 0 0 30px rgba(57,255,20,0.25); }
+.overlay-check { font-size: 64px; color: #39FF14; margin-bottom: 10px; text-shadow: 0 0 8px rgba(57,255,20,0.6); }
+.overlay-text { font-size: 26px; font-weight: 800; color: var(--fg); letter-spacing: 0.3px; }
 
 /* Ensure hidden state wins over overlay's display */
 .overlay.hidden { display: none !important; }
-. @font-face {
+@font-face {
   font-family: 'AtlasStencil';
   src: url('/static/fonts/STENCIL.woff') format('woff');
   font-weight: 700;

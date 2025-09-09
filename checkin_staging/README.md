@@ -9,6 +9,17 @@ Upload this folder to a new GitHub repository and deploy on Render.
 - `src/templates/checkin/*.html` — kiosk/admin/member pages
 - `src/static/checkin/*` — CSS/JS assets (uses CDN fallback for QR scanning/render)
 
+## Build Progress (Sep 2025)
+- Kiosk UI: Large circular neon scan button, front camera default, centered headers, bold stencil-style title.
+- Scanner: Native BarcodeDetector with jsQR fallback; live preview; auto-stop on success.
+- Success UX: Full-screen overlay with chime; shows first name; 5-second auto-dismiss.
+- Manual Check-In: One-of Name or Phone; name-only attempts single-match lookup.
+- Resend QR: One-of Email or Phone; HTML email with “Open My QR Code” button; fallback token.
+- CSV Import: Preview (inserts/updates/reactivations/deactivate candidates) and import with optional deactivation.
+- Admin: PIN login; recent check-ins; CSV import and search.
+- SMTP: Configurable via env (SendGrid, SES, Gmail); staging verified with SendGrid.
+- Health: `/healthz` endpoint for monitoring.
+
 ## Render Deployment
 1) Create a new Web Service from this repo (Render detects `Dockerfile`).
 2) Add a Persistent Disk:
@@ -16,18 +27,40 @@ Upload this folder to a new GitHub repository and deploy on Render.
 3) Environment Variables:
    - `CHECKIN_DB_PATH=/data/checkin.sqlite3`
    - `CHECKIN_SESSION_SECRET=<random-long-string>`
-   - `CHECKIN_DUP_WINDOW_MINUTES=5`
-   - First run only: `ENABLE_INIT_PIN=1`
-   - (Optional) SMTP: `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
+- `CHECKIN_DUP_WINDOW_MINUTES=5`
+- First run only: `ENABLE_INIT_PIN=1`
+- (Optional) SMTP: `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`
 4) Deploy → Initialize PIN:
    - Visit: `https://<service>/admin/init_pin?pin=1234&name=Admin`
    - Remove `ENABLE_INIT_PIN` and redeploy
 5) Verify:
    - `https://<service>/healthz` → ok
    - `https://<service>/admin/login` → login with PIN
-   - `https://<service>/kiosk` → kiosk page
+- `https://<service>/kiosk` → kiosk page
+
+## Next Steps to Productionize
+- Reliability & Offline
+  - Vendor local `jsqr.min.js` and `qrcode.min.js` under `src/static/checkin/` to avoid any CDN dependency.
+  - Add PWA manifest, icons, and no-sleep hints; document Guided Access setup.
+- Security & Abuse Controls
+  - Add CSRF tokens for admin forms.
+  - PIN lockout (basic cooldown optional) and PIN rotation UI.
+  - Rate-limit `/api/qr/resend` and admin endpoints.
+- Data & Integrations
+  - Lock Mindbody CSV mapping to real headers; add import validation report.
+  - Optional scheduled nightly sync job or Mindbody API integration.
+  - Migrate to Supabase; add DB adapter to switch via env.
+- Observability & Ops
+  - Add Sentry; structure logs for imports/check-ins.
+  - Backups: Nightly copy of `/data/checkin.sqlite3` to cloud storage until Supabase.
+  - Render Blueprint (render.yaml) for one-click setup (service, disk, envs).
+- Branding & UX
+  - Embed final stencil font (`src/static/fonts/STENCIL.woff`) and confirm loading.
+  - Polish spacing, larger section headers, confirm readability at kiosk distance.
+
+## Stencil Font
+If you have a stencil font file, place it at `src/static/fonts/STENCIL.woff`. The CSS includes an `@font-face` named `AtlasStencil` and will use it for the title if present.
 
 ## Notes
 - iPad scanning uses native API if available, falls back to jsQR via CDN.
 - Member QR page renders locally if `/static/checkin/qrcode.min.js` is present, otherwise uses an external QR image.
-
