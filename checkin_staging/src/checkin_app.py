@@ -5,7 +5,10 @@ import hashlib
 import hmac
 import secrets
 import smtplib
+import io
 from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -172,6 +175,17 @@ def ensure_qr_token(member: sqlite3.Row) -> str:
     return new_token
 
 
+def generate_qr_png(data: str) -> bytes:
+    try:
+        import qrcode
+        img = qrcode.make(data)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception:
+        return b''
+
+
 def upsert_member(cur: sqlite3.Cursor, external_id: str | None, name: str, email: str | None, phone: str | None, membership_tier: str | None, status: str):
     email_n = normalize_email(email)
     phone_n = normalize_phone(phone)
@@ -213,7 +227,7 @@ def upsert_member(cur: sqlite3.Cursor, external_id: str | None, name: str, email
         return cur.lastrowid
 
 
-def send_email(to_email: str, subject: str, body: str, body_html: str | None = None) -> bool:
+def send_email(to_email: str, subject: str, body: str, body_html: str | None = None, inline_images: list | None = None) -> bool:
     host = os.environ.get("SMTP_HOST")
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
@@ -224,14 +238,25 @@ def send_email(to_email: str, subject: str, body: str, body_html: str | None = N
         return True
     try:
         if body_html:
-            from email.mime.multipart import MIMEMultipart
+            # Build a related container so we can embed images by CID
+            root = MIMEMultipart('related')
+            root['Subject'] = subject
+            root['From'] = from_email
+            root['To'] = to_email
             alt = MIMEMultipart('alternative')
-            alt['Subject'] = subject
-            alt['From'] = from_email
-            alt['To'] = to_email
+            root.attach(alt)
             alt.attach(MIMEText(body, 'plain'))
             alt.attach(MIMEText(body_html, 'html'))
-            msg = alt
+            if inline_images:
+                for (filename, content, mimetype, cid) in inline_images:
+                    try:
+                        img = MIMEImage(content, _subtype=mimetype.split('/')[-1])
+                        img.add_header('Content-ID', cid)
+                        img.add_header('Content-Disposition', 'inline', filename=filename)
+                        root.attach(img)
+                    except Exception:
+                        pass
+            msg = root
         else:
             msg = MIMEText(body, "plain")
             msg["Subject"] = subject
@@ -606,23 +631,29 @@ def create_app():
         token = ensure_qr_token(member)
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
+        # Generate inline QR image
+        qr_png = generate_qr_png(token)
         body = (
             f"Hi {member['name']},\n\n"
-            f"Here is your Atlas Gym check-in code. Keep this email or bookmark the link.\n\n"
-            f"Check-in link: {link}\n"
-            f"QR token (for manual entry if needed): {token}\n\n"
+            f"Here is your Atlas Gym check-in code. You can scan the QR below or open it in your browser.\n\n"
+            f"Open link: {link}\n\n"
             f"– Atlas Gym"
         )
         body_html = f"""
-        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45;color:#111'>
-          <p>Hi {member['name']},</p>
-          <p>Here is your Atlas Gym check-in code. Keep this email or bookmark the link.</p>
-          <p><a href='{link}' style='background:#111;color:#fff;padding:10px 14px;border-radius:8px;text-decoration:none'>Open My QR Code</a></p>
-          <p style='color:#666'>Token (fallback): <code>{token}</code></p>
-          <p>– Atlas Gym</p>
+        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45;color:#eef2f7;background:#0b0f14;padding:20px'>
+          <div style='max-width:520px;margin:0 auto;background:#0a0f18;border:1px solid #233152;border-radius:12px;padding:16px'>
+            <h2 style='margin:0 0 10px;font-size:20px;letter-spacing:0.5px'>THE ATLAS GYM CHECK-IN</h2>
+            <p style='color:#c8c8c8'>Hi {member['name']},</p>
+            <p style='color:#c8c8c8'>Show this QR at the front desk kiosk to check in.</p>
+            <div style='text-align:center;margin:14px 0'>
+              <img src='cid:qrimg' width='220' height='220' alt='Your QR Code' />
+            </div>
+            <p><a href='{link}' style='display:inline-block;background:#39FF14;color:#000;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:800'>Open My QR Code</a></p>
+          </div>
         </div>
         """
-        ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html) if email_n else True
+        inline = [("qr.png", qr_png, "image/png", "<qrimg>")] if qr_png else None
+        ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html, inline_images=inline) if email_n else True
         return jsonify({"ok": ok})
 
     @app.get("/member/qr")
@@ -631,6 +662,56 @@ def create_app():
         if not token:
             return "Missing token", 400
         return render_template("checkin/member_qr.html", token=token)
+
+    @app.get("/api/qr.png")
+    def api_qr_png():
+        token = (request.args.get("token") or "").strip()
+        if not token:
+            return "Bad request", 400
+        png = generate_qr_png(token)
+        if not png:
+            return "Error", 500
+        from flask import Response
+        return Response(png, mimetype='image/png')
+
+    # PWA icons (generated server-side for convenience)
+    @app.get("/icons/icon-192.png")
+    def icon_192():
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.new('RGB', (192, 192), color=(0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            # neon green border
+            draw.rectangle([4, 4, 188, 188], outline=(57, 255, 20), width=4)
+            # centered A monogram
+            text = "A"
+            font = ImageFont.load_default()
+            w, h = draw.textsize(text, font=font)
+            draw.text(((192-w)//2, (192-h)//2), text, fill=(57, 255, 20), font=font)
+            buf = io.BytesIO(); img.save(buf, format='PNG')
+            buf.seek(0)
+            from flask import Response
+            return Response(buf.getvalue(), mimetype='image/png')
+        except Exception:
+            return "", 404
+
+    @app.get("/icons/icon-512.png")
+    def icon_512():
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            img = Image.new('RGB', (512, 512), color=(0, 0, 0))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([8, 8, 504, 504], outline=(57, 255, 20), width=6)
+            text = "A"
+            font = ImageFont.load_default()
+            w, h = draw.textsize(text, font=font)
+            draw.text(((512-w)//2, (512-h)//2), text, fill=(57, 255, 20), font=font)
+            buf = io.BytesIO(); img.save(buf, format='PNG')
+            buf.seek(0)
+            from flask import Response
+            return Response(buf.getvalue(), mimetype='image/png')
+        except Exception:
+            return "", 404
 
     @app.get("/admin/init_pin")
     def admin_init_pin():

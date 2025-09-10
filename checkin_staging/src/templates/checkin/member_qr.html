@@ -11,9 +11,8 @@
       <h1>Your Check-In Code</h1>
       <p>Show this code at the front desk kiosk.</p>
       <div class="token-box" id="token-box">{{ token }}</div>
-      <div style="margin:12px 0;">
-        <canvas id="qrCanvas" width="220" height="220" style="background:#fff"></canvas>
-        <img id="qrImg" alt="Your QR code" style="display:none;" />
+      <div style="margin:12px 0; text-align:center;">
+        <img id="qrImg" width="220" height="220" alt="Your QR code" src="/api/qr.png?token={{ token }}" />
       </div>
       <button id="copy">Copy</button>
       <p class="muted">Tip: Add this page to your phone’s home screen or bookmarks.</p>
@@ -24,37 +23,7 @@
         const txt = document.getElementById('token-box').textContent.trim();
         try { await navigator.clipboard.writeText(txt); alert('Copied!'); } catch (e) { alert('Copy failed'); }
       });
-      (async function(){
-        const token = document.getElementById('token-box').textContent.trim();
-        async function tryLocal() {
-          try {
-            await new Promise((resolve, reject) => {
-              const s = document.createElement('script');
-              s.src = '/static/checkin/qrcode.min.js';
-              s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
-            });
-            if (!window.QRCode) return false;
-            const canvas = document.getElementById('qrCanvas');
-            const q = new window.QRCode(canvas, {
-              text: token,
-              width: 220,
-              height: 220,
-              colorDark: '#000000',
-              colorLight: '#ffffff',
-              correctLevel: window.QRCode.CorrectLevel.M
-            });
-            return true;
-          } catch (e) { return false; }
-        }
-        const ok = await tryLocal();
-        if (!ok) {
-          const img = document.getElementById('qrImg');
-          img.style.display = 'block';
-          img.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(token)}`;
-          document.getElementById('qrCanvas').style.display = 'none';
-        }
-      })();
+      // QR is rendered server-side by /api/qr.png
     </script>
   </body>
   </html>
-
