@@ -527,12 +527,18 @@ def create_app():
     @app.post("/api/checkin")
     def api_checkin():
         payload = request.get_json(silent=True) or {}
+        member_id_in = (payload.get("member_id") or request.form.get("member_id") or "").strip()
         qr_token = (payload.get("qr_token") or request.form.get("qr_token") or "").strip()
         email = (payload.get("email") or request.form.get("email") or "").strip()
         phone = (payload.get("phone") or request.form.get("phone") or "").strip()
         method = "QR" if qr_token else "manual"
         member = None
-        if qr_token:
+        if member_id_in.isdigit():
+            con = connect_db(); cur = con.cursor()
+            cur.execute("SELECT * FROM members WHERE id = ? AND status='active'", (int(member_id_in),))
+            member = cur.fetchone()
+            con.close()
+        elif qr_token:
             member = _find_member_by_qr_token(qr_token)
         else:
             member = _find_member_by_lookup(email, phone)
@@ -551,6 +557,26 @@ def create_app():
         con.commit()
         con.close()
         return jsonify({"ok": True, "member_name": member["name"]})
+
+    @app.get("/api/kiosk/suggest")
+    def kiosk_suggest():
+        # Public minimal suggestion: returns id+name only, requires q length >= 2
+        q = (request.args.get("q") or "").strip()
+        if len(q) < 2:
+            return jsonify([])
+        like = f"%{q}%"
+        con = connect_db(); cur = con.cursor()
+        cur.execute(
+            """
+            SELECT id, name FROM members
+            WHERE status='active' AND name LIKE ?
+            ORDER BY name ASC
+            LIMIT 5
+            """,
+            (like,)
+        )
+        rows = cur.fetchall(); con.close()
+        return jsonify([{"id": r["id"], "name": r["name"]} for r in rows])
 
     @app.post("/api/qr/resend")
     def api_qr_resend():

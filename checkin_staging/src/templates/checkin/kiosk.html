@@ -29,9 +29,11 @@
       <div class="panel">
         <h2>Check-In (Manual)</h2>
         <form id="checkin-form">
+          <input type="hidden" name="member_id" id="member_id" />
           <div class="row">
             <label>Name <span class="muted">(or enter Phone)</span></label>
             <input type="text" name="name" placeholder="Your full name" autocomplete="name" />
+            <div id="name-suggestions" class="suggestions hidden" role="listbox" aria-label="Suggestions"></div>
           </div>
           <div class="row">
             <label>Phone <span class="muted">(or enter Name)</span></label>

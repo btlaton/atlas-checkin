@@ -5,7 +5,7 @@
 body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
 .container { max-width: 720px; margin: 32px auto; padding: 0 16px; }
 .container.small { max-width: 520px; }
-h1 { margin: 0 0 16px; font-size: 40px; line-height: 1.1; }
+h1 { margin: 0 0 16px; font-size: 48px; line-height: 1.1; }
 .logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
 .logo .fallback-title { font-family: 'AtlasStencil', "Stencil Std", "Gunplay", "Black Ops One", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
 .panel { background: var(--panel); padding: 16px; border-radius: 12px; margin: 12px 0; border: 1px solid #1d2740; box-shadow: 0 4px 18px rgba(0,0,0,0.25); }
@@ -71,3 +71,10 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
   font-style: normal;
   font-display: swap;
 }
+
+/* Suggestions dropdown */
+.suggestions { margin-top: 4px; border: 1px solid #333; border-radius: 10px; background: #0a0a0a; overflow: hidden; box-shadow: 0 8px 16px rgba(0,0,0,0.35); }
+.suggestions.hidden { display: none; }
+.suggestions ul { list-style: none; margin: 0; padding: 6px 0; }
+.suggestions li { padding: 10px 14px; cursor: pointer; }
+.suggestions li:hover { background: #0f192d; }

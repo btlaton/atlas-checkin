@@ -3,6 +3,7 @@
   const result = document.getElementById('result');
   const overlay = document.getElementById('success-overlay');
   const overlayText = document.getElementById('success-text');
+  const memberIdInput = document.getElementById('member_id');
 
   // Ensure overlay starts hidden
   overlay?.classList.add('hidden');
@@ -43,7 +44,16 @@
     const data = Object.fromEntries(new FormData(form).entries());
     const name = (data.name || '').trim();
     const phone = (data.phone || '').trim();
+    const member_id = (data.member_id || '').trim();
     if (!name && !phone) { result.textContent = 'Enter phone or name to continue.'; return; }
+
+    if (member_id) {
+      // Direct check-in by selected member id
+      const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ member_id }) });
+      const j = await r.json();
+      if (j.ok) { showSuccess(j.member_name || 'Member'); form.reset(); memberIdInput.value=''; hideSuggestions(); } else { result.textContent = j.error || 'Check-in failed'; }
+      return;
+    }
 
     if (phone) {
       const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
@@ -151,4 +161,37 @@
 
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
+
+  // Name suggestions (typeahead)
+  const nameInput = form?.querySelector('input[name="name"]');
+  const sugEl = document.getElementById('name-suggestions');
+  let nameDebounce;
+  function hideSuggestions(){ if (sugEl) { sugEl.classList.add('hidden'); sugEl.innerHTML=''; } }
+  async function fetchSuggestions(q){
+    if (!q || q.length < 2) { hideSuggestions(); return; }
+    try {
+      const r = await fetch(`/api/kiosk/suggest?q=${encodeURIComponent(q)}`);
+      const list = await r.json();
+      if (!Array.isArray(list) || list.length === 0) { hideSuggestions(); return; }
+      sugEl.innerHTML = `<ul>${list.map(m=>`<li data-id="${m.id}">${m.name}</li>`).join('')}</ul>`;
+      sugEl.classList.remove('hidden');
+    } catch { hideSuggestions(); }
+  }
+  nameInput?.addEventListener('input', () => {
+    memberIdInput.value = '';
+    clearTimeout(nameDebounce);
+    const q = nameInput.value.trim();
+    nameDebounce = setTimeout(()=>fetchSuggestions(q), 200);
+  });
+  sugEl?.addEventListener('click', (e)=>{
+    const li = e.target.closest('li');
+    if (!li) return;
+    const id = li.getAttribute('data-id');
+    const nm = li.textContent;
+    nameInput.value = nm;
+    memberIdInput.value = id;
+    hideSuggestions();
+    // Auto-submit for speed
+    form.requestSubmit();
+  });
 })();
