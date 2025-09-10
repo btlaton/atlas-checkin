@@ -7,7 +7,7 @@ body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-s
 .container.small { max-width: 520px; }
 h1 { margin: 0 0 16px; font-size: 48px; line-height: 1.1; }
 .container-grid { max-width: 1024px; padding: 8px 12px; }
-.top-half { min-height: 62vh; display:flex; align-items:flex-end; justify-content:center; }
+.top-half { min-height: 60vh; }
 .bottom-half { min-height: 33vh; display: flex; align-items: stretch; margin-top: 0; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; }
 /* Keep two columns on iPad portrait (768px). Collapse to one column below 700px. */
