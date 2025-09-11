@@ -148,6 +148,14 @@
         detector = new window.BarcodeDetector({ formats: ['qr_code'] });
       } catch { await tryLoadJsQR(); }
     } else { await tryLoadJsQR(); }
+    // Update debug
+    const dbg = document.getElementById('scan-debug');
+    if (dbg) {
+      const bd = detector ? 'yes' : 'no';
+      const jq = (typeof window.jsQR === 'function') ? 'yes' : 'no';
+      dbg.textContent = `BD:${bd} jsQR:${jq}`;
+      dbg.classList.remove('hidden');
+    }
   }
 
   async function tryLoadJsQR() {
@@ -223,6 +231,9 @@
         if (j.ok) { showSuccess(j.member_name || 'Member'); } else { result.textContent = j.error || 'Check-in failed'; }
         return;
       }
+      // Update debug dims while scanning
+      const dbg = document.getElementById('scan-debug');
+      if (dbg) dbg.textContent = `BD:${detector?'yes':'no'} jsQR:${typeof window.jsQR==='function'?'yes':'no'} v:${video.videoWidth}x${video.videoHeight}`;
     } catch {}
     rafId = requestAnimationFrame(tick);
   }

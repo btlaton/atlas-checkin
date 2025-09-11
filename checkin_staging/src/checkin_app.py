@@ -349,6 +349,15 @@ def create_app():
         con.close()
         return render_template("checkin/admin_dashboard.html", checkins=rows)
 
+    @app.post("/admin/smtp_test")
+    def admin_smtp_test():
+        require_admin()
+        to = (request.json or {}).get('to')
+        if not to:
+            return jsonify({"ok": False, "error": "Missing 'to'"}), 400
+        ok = send_email(to, "Atlas Check-In Test", "This is a test email from staging.", "<p>This is a <b>test</b> email from staging.</p>")
+        return jsonify({"ok": ok})
+
     @app.post("/api/upload_csv")
     def upload_csv():
         require_admin()

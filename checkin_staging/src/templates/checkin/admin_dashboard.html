@@ -29,6 +29,15 @@
       </section>
 
       <section class="panel">
+        <h2>SMTP Test</h2>
+        <form id="smtp-test-form">
+          <input type="email" name="to" placeholder="test@domain.com" required />
+          <button type="submit">Send Test Email</button>
+        </form>
+        <div id="smtp-test-result" class="result"></div>
+      </section>
+
+      <section class="panel">
         <h2>Search Members</h2>
         <input id="search" type="text" placeholder="Name, email, phone" />
         <div id="search-results"></div>
@@ -98,7 +107,16 @@
           results.innerHTML = `<ul>${j.map(m => `<li>${m.name} — ${m.email_lower||''} ${m.phone_e164||''}</li>`).join('')}</ul>`;
         }, 250);
       });
+
+      // SMTP test
+      const smtpForm = document.getElementById('smtp-test-form');
+      smtpForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const to = smtpForm.querySelector('input[name="to"]').value.trim();
+        const r = await fetch('/admin/smtp_test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ to }) });
+        const j = await r.json();
+        document.getElementById('smtp-test-result').textContent = j.ok ? 'Test email sent.' : (j.error || 'Failed to send test email');
+      });
     </script>
   </body>
   </html>
-
