@@ -5,6 +5,7 @@
   const overlayText = document.getElementById('success-text');
   const memberIdInput = document.getElementById('member_id');
   const aimHint = document.getElementById('aim-hint');
+  const scanBtn = document.getElementById('scan-button');
 
   // Ensure overlay starts hidden
   overlay?.classList.add('hidden');
@@ -123,9 +124,7 @@
     if (taps >= 3) window.location.href = '/admin/login';
   });
 
-  // QR scanning (front camera default), minimal status text
-  const scanBtn = document.getElementById('scan-button');
-  const flipBtn = document.getElementById('flip-camera');
+  // QR scanning (front camera default)
   const scanWrap = document.getElementById('scan-wrap');
   const scanSupport = document.getElementById('scan-support');
   const scanResult = document.getElementById('scan-result');
