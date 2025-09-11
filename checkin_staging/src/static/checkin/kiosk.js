@@ -129,10 +129,11 @@
   }
 
   async function tryLoadJsQR() {
-    if (window.jsQR) { jsqrReady = true; return; }
-    await new Promise((resolve) => { const s = document.createElement('script'); s.src = '/static/checkin/jsqr.min.js'; s.onload = () => { jsqrReady = !!window.jsQR; resolve(); }; s.onerror = () => resolve(); document.head.appendChild(s); });
+    if (typeof window.jsQR === 'function') { jsqrReady = true; return; }
+    // Prefer CDN; fallback to local if present
+    await new Promise((resolve) => { const s1 = document.createElement('script'); s1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; s1.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s1.onerror = () => resolve(); document.head.appendChild(s1); });
     if (!jsqrReady) {
-      await new Promise((resolve) => { const s2 = document.createElement('script'); s2.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; s2.onload = () => { jsqrReady = !!window.jsQR; resolve(); }; s2.onerror = () => resolve(); document.head.appendChild(s2); });
+      await new Promise((resolve) => { const s2 = document.createElement('script'); s2.src = '/static/checkin/jsqr.min.js'; s2.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s2.onerror = () => resolve(); document.head.appendChild(s2); });
       if (!jsqrReady) { scanSupport.textContent = 'Camera scanning not supported on this device. Use manual entry.'; scanBtn.disabled = true; }
     }
   }
