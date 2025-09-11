@@ -175,10 +175,18 @@ def ensure_qr_token(member: sqlite3.Row) -> str:
     return new_token
 
 
-def generate_qr_png(data: str) -> bytes:
+def generate_qr_png(data: str, box_size: int = 8, border: int = 2) -> bytes:
     try:
         import qrcode
-        img = qrcode.make(data)
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=box_size,
+            border=border,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
         buf = io.BytesIO()
         img.save(buf, format='PNG')
         return buf.getvalue()
@@ -632,7 +640,7 @@ def create_app():
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
         # Generate inline QR image
-        qr_png = generate_qr_png(token)
+        qr_png = generate_qr_png(token, box_size=10, border=2)
         body = (
             f"Hi {member['name']},\n\n"
             f"Here is your Atlas Gym check-in code. You can scan the QR below or open it in your browser.\n\n"
@@ -640,15 +648,17 @@ def create_app():
             f"– Atlas Gym"
         )
         body_html = f"""
-        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.45;color:#eef2f7;background:#0b0f14;padding:20px'>
-          <div style='max-width:520px;margin:0 auto;background:#0a0f18;border:1px solid #233152;border-radius:12px;padding:16px'>
-            <h2 style='margin:0 0 10px;font-size:20px;letter-spacing:0.5px'>THE ATLAS GYM CHECK-IN</h2>
-            <p style='color:#c8c8c8'>Hi {member['name']},</p>
-            <p style='color:#c8c8c8'>Show this QR at the front desk kiosk to check in.</p>
-            <div style='text-align:center;margin:14px 0'>
-              <img src='cid:qrimg' width='220' height='220' alt='Your QR Code' />
+        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5;color:#eef2f7;background:#000;padding:20px'>
+          <div style='max-width:560px;margin:0 auto;background:#0a0a0a;border:1px solid #39FF14;border-radius:12px;padding:20px;box-shadow:0 0 20px rgba(57,255,20,0.2)'>
+            <h2 style='margin:0 0 12px;font-size:22px;letter-spacing:1px'>THE ATLAS GYM CHECK-IN</h2>
+            <p style='color:#c8c8c8;margin:0 0 8px'>Hi {member['name']},</p>
+            <p style='color:#c8c8c8;margin:0 0 12px'>Show this QR at the front desk kiosk to check in.</p>
+            <div style='text-align:center;margin:16px 0'>
+              <img src='cid:qrimg' width='280' height='280' alt='Your QR Code' style='background:#fff;border-radius:8px;border:2px solid #233152' />
             </div>
-            <p><a href='{link}' style='display:inline-block;background:#39FF14;color:#000;padding:10px 14px;border-radius:10px;text-decoration:none;font-weight:800'>Open My QR Code</a></p>
+            <p style='margin:14px 0'>
+              <a href='{link}' style='display:inline-block;background:#39FF14;color:#000;padding:12px 16px;border-radius:12px;text-decoration:none;font-weight:900;letter-spacing:0.4px'>Open My QR Code</a>
+            </p>
           </div>
         </div>
         """

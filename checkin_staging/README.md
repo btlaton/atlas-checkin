@@ -12,6 +12,7 @@ Upload this folder to a new GitHub repository and deploy on Render.
 ## Build Progress (Sep 2025)
 - Kiosk UI: Large circular neon scan button, front camera default, centered headers, bold stencil-style title.
 - Scanner: Native BarcodeDetector with jsQR fallback; live preview; auto-stop on success.
+- Camera controls: Defaults to rear camera; "Flip Camera" button toggles front/rear. Front camera frames are corrected (un-mirrored) before decoding.
 - Success UX: Full-screen overlay with chime; shows first name; 5-second auto-dismiss.
 - Manual Check-In: One-of Name or Phone; name-only attempts single-match lookup.
 - Resend QR: One-of Email or Phone; HTML email with “Open My QR Code” button; fallback token.
@@ -59,6 +60,18 @@ Upload this folder to a new GitHub repository and deploy on Render.
 - Branding & UX
   - Embed final stencil font (`src/static/fonts/STENCIL.woff`) and confirm loading.
   - Polish spacing, larger section headers, confirm readability at kiosk distance.
+
+## QR Scanning — RCA and Hardening Guidance
+- RCA (recent regression): The scanner default was switched to the front camera (user-facing), and mirrored frames caused inconsistent decoding in some environments. We now default to the rear camera and un‑mirror front-camera frames when used.
+- Hardening recommendations:
+  - Default to rear camera for kiosk scanning; keep a visible Flip Camera control.
+  - jsQR fallback: Vendor real jsQR and use it when BarcodeDetector yields no results for N frames.
+  - Visuals: Ask users to maximize phone brightness, increase QR size (220–320px on screen), and hold at a slight angle to minimize glare.
+  - Contrast: Prefer black QR on white background; avoid low‑contrast themes in member QR display.
+  - Distance: Best at ~10–25 cm; too close causes blur, too far reduces resolution.
+  - Lighting: Ensure ambient light on the QR; avoid direct reflections on the phone’s glass.
+  - Performance: Keep preview at modest resolution to increase frame rate; iPad Safari benefits from smaller decode surfaces.
+  - Mounting: If the kiosk is mounted and rear camera is practical, rear camera yields fewer glare issues.
 
 ## Stencil Font
 If you have a stencil font file, place it at `src/static/fonts/STENCIL.woff`. The CSS includes an `@font-face` named `AtlasStencil` and will use it for the title if present.

@@ -4,6 +4,7 @@
   const overlay = document.getElementById('success-overlay');
   const overlayText = document.getElementById('success-text');
   const memberIdInput = document.getElementById('member_id');
+  const aimHint = document.getElementById('aim-hint');
 
   // Ensure overlay starts hidden
   overlay?.classList.add('hidden');
@@ -102,6 +103,7 @@
 
   // QR scanning (front camera default), minimal status text
   const scanBtn = document.getElementById('scan-button');
+  const flipBtn = document.getElementById('flip-camera');
   const scanWrap = document.getElementById('scan-wrap');
   const scanSupport = document.getElementById('scan-support');
   const scanResult = document.getElementById('scan-result');
@@ -109,6 +111,10 @@
   const canvas = document.getElementById('frame');
   const ctx = canvas.getContext('2d');
   let mediaStream = null, rafId = null, detector = null, jsqrReady = false;
+  let facing = 'user'; // default to front camera for mounted iPad
+  const sampleCanvas = document.createElement('canvas');
+  const sampleCtx = sampleCanvas.getContext('2d');
+  const MAX_SAMPLE_W = 480;
 
   async function checkSupport() {
     scanSupport.textContent = '';
@@ -133,23 +139,62 @@
 
   async function startScan() {
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'user' } }, audio: false });
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { exact: facing } }, audio: false });
+      } catch {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false });
+      }
       video.srcObject = mediaStream; await video.play();
       scanBtn.classList.add('hidden'); scanWrap.classList.remove('hidden');
+      if (aimHint) {
+        aimHint.classList.remove('hidden');
+        // Auto-hide hint after a few seconds
+        setTimeout(()=>aimHint.classList.add('hidden'), 6000);
+      }
       tick();
     } catch { scanResult.textContent = 'Unable to access camera'; }
   }
-  function stopScan() { if (rafId) cancelAnimationFrame(rafId); if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); scanWrap.classList.add('hidden'); scanBtn.classList.remove('hidden'); }
+  function stopScan() { if (rafId) cancelAnimationFrame(rafId); if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); scanWrap.classList.add('hidden'); scanBtn.classList.remove('hidden'); if (aimHint) aimHint.classList.add('hidden'); }
 
   async function tick() {
     if (!video.videoWidth) { rafId = requestAnimationFrame(tick); return; }
-    canvas.width = video.videoWidth; canvas.height = video.videoHeight; ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    // If using front camera, un-mirror the frame for decoders
+    if (facing === 'user') {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, -canvas.width, 0, canvas.width, canvas.height);
+      ctx.restore();
+    } else {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    }
     try {
       let raw = null;
-      if (detector) { const bm = await createImageBitmap(canvas); const codes = await detector.detect(bm); if (codes && codes.length) raw = codes[0].rawValue || codes[0].rawValue; }
-      else if (jsqrReady) { const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height); const code = window.jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' }); if (code && code.data) raw = code.data; }
+      if (detector) {
+        const bm = await createImageBitmap(canvas);
+        const codes = await detector.detect(bm);
+        if (codes && codes.length) raw = codes[0].rawValue || codes[0].rawValue;
+      }
+      if (!raw && jsqrReady) {
+        const ratio = canvas.width / canvas.height;
+        let sw = Math.min(MAX_SAMPLE_W, canvas.width);
+        let sh = Math.floor(sw / ratio);
+        sampleCanvas.width = sw; sampleCanvas.height = sh;
+        if (facing === 'user') {
+          sampleCtx.save();
+          sampleCtx.scale(-1, 1);
+          sampleCtx.drawImage(video, -sw, 0, sw, sh);
+          sampleCtx.restore();
+        } else {
+          sampleCtx.drawImage(video, 0, 0, sw, sh);
+        }
+        const imgData = sampleCtx.getImageData(0, 0, sw, sh);
+        const code = window.jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
+        if (code && code.data) raw = code.data;
+      }
       if (raw) {
         stopScan();
+        if (aimHint) aimHint.classList.add('hidden');
         const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qr_token: raw }) });
         const j = await r.json();
         if (j.ok) { showSuccess(j.member_name || 'Member'); } else { result.textContent = j.error || 'Check-in failed'; }
@@ -161,6 +206,12 @@
 
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
+  flipBtn?.addEventListener('click', async () => {
+    // Toggle facing mode and restart stream
+    facing = (facing === 'environment') ? 'user' : 'environment';
+    stopScan();
+    await startScan();
+  });
 
   // Name suggestions (typeahead)
   const nameInput = form?.querySelector('input[name="name"]');
