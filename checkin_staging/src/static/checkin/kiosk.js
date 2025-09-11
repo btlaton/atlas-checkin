@@ -15,19 +15,36 @@
     return n.split(/\s+/)[0];
   }
 
+  // Audio chime — persistent context with iOS unlock + audible envelope
+  let audioCtx = null;
+  function getAudioCtx() {
+    try {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    } catch {}
+    return audioCtx;
+  }
+  window.addEventListener('touchstart', () => { try { getAudioCtx(); } catch {} }, { once: true });
+  scanBtn?.addEventListener('click', () => { try { getAudioCtx(); } catch {} });
   function playChime() {
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = 880; // A5
-      o.connect(g); g.connect(ctx.destination);
-      g.gain.setValueAtTime(0.001, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.02);
-      o.start();
-      // short decay
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-      o.stop(ctx.currentTime + 0.3);
+      const ctx = getAudioCtx();
+      if (!ctx) return;
+      const now = ctx.currentTime;
+      const sequence = [
+        { f: 880, start: now, dur: 0.12 },
+        { f: 1175, start: now + 0.13, dur: 0.14 },
+      ];
+      sequence.forEach(({ f, start, dur }) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'triangle'; o.frequency.value = f;
+        o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.exponentialRampToValueAtTime(0.3, start + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        o.start(start); o.stop(start + dur + 0.02);
+      });
     } catch {}
   }
 
@@ -89,7 +106,12 @@
     const payload = {}; if (email) payload.email = email; if (phone) payload.phone = phone;
     const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const j = await r.json();
-    rres.textContent = j.ok ? 'Check your inbox for your QR code.' : (j.error || 'Unable to send QR code');
+    if (j.ok) {
+      rres.textContent = 'Check your inbox for your QR code.';
+      rform.reset();
+    } else {
+      rres.textContent = j.error || 'Unable to send QR code';
+    }
   });
 
   // Staff unlock: triple-tap header
@@ -207,12 +229,6 @@
 
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
-  flipBtn?.addEventListener('click', async () => {
-    // Toggle facing mode and restart stream
-    facing = (facing === 'environment') ? 'user' : 'environment';
-    stopScan();
-    await startScan();
-  });
 
   // Name suggestions (typeahead)
   const nameInput = form?.querySelector('input[name="name"]');
