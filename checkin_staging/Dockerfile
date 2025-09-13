@@ -11,7 +11,8 @@ RUN pip install --no-cache-dir \
     Flask==3.0.0 \
     gunicorn==21.2.0 \
     qrcode[pil]==7.4.2 \
-    Pillow==10.4.0
+    Pillow==10.4.0 \
+    psycopg[binary]==3.2.1
 
 ENV PYTHONPATH=/app/src
 ENV PORT=5055
