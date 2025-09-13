@@ -470,6 +470,9 @@ def create_app():
         pin = request.form.get("pin", "")
         if verify_pin(pin):
             session["admin"] = True
+            nxt = request.args.get("next") or ""
+            if isinstance(nxt, str) and nxt.startswith("/"):
+                return redirect(nxt)
             return redirect(url_for("admin_dashboard"))
         return render_template("checkin/admin_login.html", error="Invalid PIN")
 
@@ -481,6 +484,11 @@ def create_app():
     def admin_logout():
         session.pop("admin", None)
         return redirect(url_for("admin_login"))
+
+    # Staff portal login shortcut (reuses /admin/login template/handler)
+    @app.get("/staff/login")
+    def staff_login():
+        return redirect(url_for("admin_login", next="/staff"))
 
     @app.get("/admin")
     def admin_dashboard():
@@ -499,6 +507,83 @@ def create_app():
         rows = cur.fetchall()
         con.close()
         return render_template("checkin/admin_dashboard.html", checkins=rows)
+
+    @app.get("/staff")
+    def staff_dashboard():
+        require_admin()
+        return render_template("checkin/staff_dashboard.html")
+
+    @app.get("/api/staff/metrics")
+    def api_staff_metrics():
+        require_admin()
+        try:
+            con = connect_db(); cur = con.cursor()
+            # Today totals
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+            else:
+                cur.execute("SELECT COUNT(*) FROM check_ins WHERE date(timestamp) = date('now')")
+            today_total = (cur.fetchone() or [0])[0]
+
+            if using_postgres():
+                cur.execute("SELECT COUNT(DISTINCT member_id) FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+            else:
+                cur.execute("SELECT COUNT(DISTINCT member_id) FROM check_ins WHERE date(timestamp) = date('now')")
+            today_unique = (cur.fetchone() or [0])[0]
+
+            # Recent check-ins (last 10)
+            cur.execute(
+                ("""
+                 SELECT ci.timestamp, ci.method, m.name
+                 FROM check_ins ci JOIN members m ON m.id = ci.member_id
+                 ORDER BY ci.timestamp DESC LIMIT 10
+                 """ if using_postgres() else
+                 """
+                 SELECT ci.timestamp, ci.method, m.name
+                 FROM check_ins ci JOIN members m ON m.id = ci.member_id
+                 ORDER BY ci.timestamp DESC LIMIT 10
+                 """
+                )
+            )
+            recents = []
+            for r in cur.fetchall():
+                if using_postgres():
+                    recents.append({"timestamp": str(r.get("timestamp")), "method": r.get("method"), "name": r.get("name")})
+                else:
+                    recents.append({"timestamp": r[0], "method": r[1], "name": r[2]})
+
+            # 7-day trend (fill missing days in Python)
+            if using_postgres():
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) FROM check_ins WHERE timestamp >= CURRENT_DATE - INTERVAL '6 days' GROUP BY d ORDER BY d ASC")
+                rows = cur.fetchall()
+                counts = {str(r.get('d')): r.get('count') if 'count' in r else r[1] for r in rows}
+            else:
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) FROM check_ins WHERE date(timestamp) >= date('now','-6 day') GROUP BY date(timestamp) ORDER BY d ASC")
+                rows = cur.fetchall()
+                counts = {r[0]: r[1]}
+                counts = {r[0]: r[1] for r in rows}
+            from datetime import date, timedelta
+            today = date.today()
+            trend = []
+            for i in range(6, -1, -1):
+                d = today - timedelta(days=i)
+                ds = d.isoformat()
+                trend.append({"date": ds, "count": int(counts.get(ds, 0) or 0)})
+
+            con.close()
+            return jsonify({
+                "ok": True,
+                "today_total": today_total,
+                "today_unique": today_unique,
+                "trend": trend,
+                "recent": recents,
+            })
+        except Exception as e:
+            try:
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.get("/admin/members")
     def admin_members_page():
