@@ -12,6 +12,17 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
+# Optional Postgres (Supabase) support via psycopg
+DATABASE_URL = os.environ.get("DATABASE_URL")
+_PG_AVAILABLE = False
+try:
+    if DATABASE_URL:
+        import psycopg
+        from psycopg.rows import dict_row as _pg_dict_row
+        _PG_AVAILABLE = True
+except Exception:
+    _PG_AVAILABLE = False
+
 from flask import (
     Flask,
     request,
@@ -39,13 +50,54 @@ DUP_WINDOW_MINUTES = int(os.environ.get("CHECKIN_DUP_WINDOW_MINUTES", "5"))
 SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me")
 
 
-def connect_db() -> sqlite3.Connection:
+def using_postgres() -> bool:
+    return bool(DATABASE_URL)
+
+
+def _connect_sqlite() -> sqlite3.Connection:
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     return con
 
 
+def _connect_postgres():
+    if not _PG_AVAILABLE:
+        raise RuntimeError(
+            "DATABASE_URL is set but psycopg is not installed. Add psycopg[binary] to Dockerfile."
+        )
+    return psycopg.connect(DATABASE_URL, row_factory=_pg_dict_row)
+
+
+def connect_db():
+    return _connect_postgres() if using_postgres() else _connect_sqlite()
+
+
 def init_db():
+    # Postgres schema is managed via migrations. For Postgres, only ensure a default location exists.
+    if using_postgres():
+        try:
+            con = connect_db(); cur = con.cursor()
+            # Ensure a default location with id=1 exists (FK target for check_ins)
+            cur.execute("SELECT 1 FROM locations WHERE id = %s" if using_postgres() else "SELECT 1 FROM locations WHERE id = ?", (1,))
+            row = cur.fetchone()
+            if not row:
+                if using_postgres():
+                    cur.execute(
+                        "INSERT INTO locations (id, name, timezone) VALUES (1, %s, %s) ON CONFLICT (id) DO NOTHING",
+                        ("Atlas Gym", "America/Los_Angeles"),
+                    )
+                else:
+                    cur.execute("INSERT INTO locations(id, name, timezone) VALUES (1, ?, ?)", ("Atlas Gym", "America/Los_Angeles"))
+                con.commit()
+        except Exception:
+            # If schema/tables aren't there yet, ignore; migrations will create them.
+            pass
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+        return
     con = connect_db()
     cur = con.cursor()
     cur.execute(
@@ -162,14 +214,17 @@ def normalize_phone(phone: str | None) -> str | None:
     return "+" + digits if digits else None
 
 
-def ensure_qr_token(member: sqlite3.Row) -> str:
+def ensure_qr_token(member) -> str:
     token = member["qr_token"]
     if token:
         return token
     new_token = secrets.token_urlsafe(24)
     con = connect_db()
     cur = con.cursor()
-    cur.execute("UPDATE members SET qr_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_token, member["id"]))
+    if using_postgres():
+        cur.execute("UPDATE members SET qr_token = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (new_token, member["id"]))
+    else:
+        cur.execute("UPDATE members SET qr_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (new_token, member["id"]))
     con.commit()
     con.close()
     return new_token
@@ -194,44 +249,81 @@ def generate_qr_png(data: str, box_size: int = 8, border: int = 2) -> bytes:
         return b''
 
 
-def upsert_member(cur: sqlite3.Cursor, external_id: str | None, name: str, email: str | None, phone: str | None, membership_tier: str | None, status: str):
+def upsert_member(cur, external_id: str | None, name: str, email: str | None, phone: str | None, membership_tier: str | None, status: str):
     email_n = normalize_email(email)
     phone_n = normalize_phone(phone)
-    cur.execute(
-        """
-        SELECT id FROM members
-        WHERE (
-            (external_id IS NOT NULL AND external_id = ?)
-            OR (email_lower IS NOT NULL AND email_lower = ?)
-            OR (phone_e164 IS NOT NULL AND phone_e164 = ?)
-        )
-        ORDER BY
-            CASE WHEN external_id = ? THEN 0 ELSE 1 END,
-            CASE WHEN email_lower = ? THEN 0 ELSE 1 END,
-            CASE WHEN phone_e164 = ? THEN 0 ELSE 1 END
-        LIMIT 1
-        """,
-        (external_id, email_n, phone_n, external_id, email_n, phone_n),
-    )
-    existing = cur.fetchone()
-    if existing:
+    if using_postgres():
         cur.execute(
             """
-            UPDATE members
-            SET name = ?, email_lower = ?, phone_e164 = ?, membership_tier = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            SELECT id FROM members
+            WHERE (
+                (external_id IS NOT NULL AND external_id = %s)
+                OR (email_lower IS NOT NULL AND email_lower = %s)
+                OR (phone_e164 IS NOT NULL AND phone_e164 = %s)
+            )
+            ORDER BY
+                CASE WHEN external_id = %s THEN 0 ELSE 1 END,
+                CASE WHEN email_lower = %s THEN 0 ELSE 1 END,
+                CASE WHEN phone_e164 = %s THEN 0 ELSE 1 END
+            LIMIT 1
             """,
-            (name, email_n, phone_n, membership_tier, status, existing[0]),
+            (external_id, email_n, phone_n, external_id, email_n, phone_n),
         )
-        return existing[0]
     else:
         cur.execute(
             """
-            INSERT INTO members(external_id, name, email_lower, phone_e164, membership_tier, status)
-            VALUES (?, ?, ?, ?, ?, ?)
+            SELECT id FROM members
+            WHERE (
+                (external_id IS NOT NULL AND external_id = ?)
+                OR (email_lower IS NOT NULL AND email_lower = ?)
+                OR (phone_e164 IS NOT NULL AND phone_e164 = ?)
+            )
+            ORDER BY
+                CASE WHEN external_id = ? THEN 0 ELSE 1 END,
+                CASE WHEN email_lower = ? THEN 0 ELSE 1 END,
+                CASE WHEN phone_e164 = ? THEN 0 ELSE 1 END
+            LIMIT 1
             """,
-            (external_id, name, email_n, phone_n, membership_tier, status),
+            (external_id, email_n, phone_n, external_id, email_n, phone_n),
         )
+    existing = cur.fetchone()
+    if existing:
+        if using_postgres():
+            cur.execute(
+                """
+                UPDATE members
+                SET name = %s, email_lower = %s, phone_e164 = %s, membership_tier = %s, status = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                """,
+                (name, email_n, phone_n, membership_tier, status, existing[0]),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE members
+                SET name = ?, email_lower = ?, phone_e164 = ?, membership_tier = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (name, email_n, phone_n, membership_tier, status, existing[0]),
+            )
+        return existing[0]
+    else:
+        if using_postgres():
+            cur.execute(
+                """
+                INSERT INTO members(external_id, name, email_lower, phone_e164, membership_tier, status)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (external_id, name, email_n, phone_n, membership_tier, status),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO members(external_id, name, email_lower, phone_e164, membership_tier, status)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (external_id, name, email_n, phone_n, membership_tier, status),
+            )
         return cur.lastrowid
 
 
@@ -386,10 +478,16 @@ def create_app():
         activated = 0
         for p in parsed:
             mid = upsert_member(cur, p["external_id"], p["name"], p["email"], p["phone"], p["tier"], p["status"])
-            cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
+            if using_postgres():
+                cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
+            else:
+                cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
             tok = cur.fetchone()[0]
             if not tok:
-                cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
+                if using_postgres():
+                    cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
+                else:
+                    cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
             if p["status"] == "active":
                 activated += 1
 
@@ -402,7 +500,11 @@ def create_app():
                 if key and key not in csv_keys:
                     missing_ids.append(r["id"])
             if missing_ids and commit:
-                cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
+                if using_postgres():
+                    for i in missing_ids:
+                        cur.execute("UPDATE members SET status='inactive' WHERE id=%s", (i,))
+                else:
+                    cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
             deactivated = len(missing_ids)
 
         if commit:
@@ -506,18 +608,32 @@ def create_app():
         con = connect_db()
         cur = con.cursor()
         like = f"%{q}%"
-        cur.execute(
-            """
-            SELECT id, name, email_lower, phone_e164, membership_tier, status
-            FROM members
-            WHERE status='active' AND (
-                name LIKE ? OR email_lower LIKE ? OR phone_e164 LIKE ?
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, name, email_lower, phone_e164, membership_tier, status
+                FROM members
+                WHERE status='active' AND (
+                    name ILIKE %s OR email_lower ILIKE %s OR phone_e164 ILIKE %s
+                )
+                ORDER BY name ASC
+                LIMIT 20
+                """,
+                (like, like, like),
             )
-            ORDER BY name ASC
-            LIMIT 20
-            """,
-            (like, like, like),
-        )
+        else:
+            cur.execute(
+                """
+                SELECT id, name, email_lower, phone_e164, membership_tier, status
+                FROM members
+                WHERE status='active' AND (
+                    name LIKE ? OR email_lower LIKE ? OR phone_e164 LIKE ?
+                )
+                ORDER BY name ASC
+                LIMIT 20
+                """,
+                (like, like, like),
+            )
         rows = [dict(r) for r in cur.fetchall()]
         con.close()
         return jsonify(rows)
@@ -525,7 +641,10 @@ def create_app():
     def _find_member_by_qr_token(token: str) -> sqlite3.Row | None:
         con = connect_db()
         cur = con.cursor()
-        cur.execute("SELECT * FROM members WHERE qr_token = ? AND status='active'", (token,))
+        cur.execute(
+            ("SELECT * FROM members WHERE qr_token = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE qr_token = ? AND status='active'"),
+            (token,),
+        )
         row = cur.fetchone()
         con.close()
         return row
@@ -536,13 +655,19 @@ def create_app():
         con = connect_db()
         cur = con.cursor()
         if email_n:
-            cur.execute("SELECT * FROM members WHERE email_lower = ? AND status='active'", (email_n,))
+            cur.execute(
+                ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
+                (email_n,),
+            )
             row = cur.fetchone()
             if row:
                 con.close()
                 return row
         if phone_n:
-            cur.execute("SELECT * FROM members WHERE phone_e164 = ? AND status='active'", (phone_n,))
+            cur.execute(
+                ("SELECT * FROM members WHERE phone_e164 = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE phone_e164 = ? AND status='active'"),
+                (phone_n,),
+            )
             row = cur.fetchone()
             con.close()
             return row
@@ -553,17 +678,23 @@ def create_app():
         con = connect_db()
         cur = con.cursor()
         cur.execute(
-            "SELECT timestamp FROM check_ins WHERE member_id = ? ORDER BY timestamp DESC LIMIT 1",
+            ("SELECT timestamp FROM check_ins WHERE member_id = %s ORDER BY timestamp DESC LIMIT 1" if using_postgres() else "SELECT timestamp FROM check_ins WHERE member_id = ? ORDER BY timestamp DESC LIMIT 1"),
             (member_id,),
         )
         row = cur.fetchone()
         con.close()
         if not row:
             return False
-        try:
-            last_ts = datetime.fromisoformat(row[0])
-        except Exception:
-            last_ts = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S")
+        ts_val = row[0] if isinstance(row, (list, tuple)) else (row.get("timestamp") if isinstance(row, dict) else row["timestamp"])
+        if isinstance(ts_val, datetime):
+            last_ts = ts_val
+        else:
+            try:
+                last_ts = datetime.fromisoformat(str(ts_val))
+            except Exception:
+                last_ts = datetime.strptime(str(ts_val), "%Y-%m-%d %H:%M:%S")
+        if last_ts.tzinfo is not None:
+            last_ts = last_ts.astimezone(timezone.utc).replace(tzinfo=None)
         return datetime.now() - last_ts < timedelta(minutes=window_minutes)
 
     @app.post("/api/checkin")
@@ -592,10 +723,16 @@ def create_app():
 
         con = connect_db()
         cur = con.cursor()
-        cur.execute(
-            "INSERT INTO check_ins(member_id, location_id, method, source_device_id, status) VALUES (?, 1, ?, ?, 'ok')",
-            (member["id"], method, request.headers.get("X-Device-Id", "kiosk-1")),
-        )
+        if using_postgres():
+            cur.execute(
+                "INSERT INTO check_ins(member_id, location_id, method, source_device_id, status) VALUES (%s, 1, %s, %s, 'ok')",
+                (member["id"], method, request.headers.get("X-Device-Id", "kiosk-1")),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO check_ins(member_id, location_id, method, source_device_id, status) VALUES (?, 1, ?, ?, 'ok')",
+                (member["id"], method, request.headers.get("X-Device-Id", "kiosk-1")),
+            )
         con.commit()
         con.close()
         return jsonify({"ok": True, "member_name": member["name"]})
@@ -635,10 +772,16 @@ def create_app():
         cur = con.cursor()
         member = None
         if email_n:
-            cur.execute("SELECT * FROM members WHERE email_lower = ? AND status='active'", (email_n,))
+            cur.execute(
+                ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
+                (email_n,),
+            )
             member = cur.fetchone()
         if not member and phone_n:
-            cur.execute("SELECT * FROM members WHERE phone_e164 = ? AND status='active'", (phone_n,))
+            cur.execute(
+                ("SELECT * FROM members WHERE phone_e164 = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE phone_e164 = ? AND status='active'"),
+                (phone_n,),
+            )
             member = cur.fetchone()
         con.close()
 
