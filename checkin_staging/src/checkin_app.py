@@ -500,6 +500,152 @@ def create_app():
         con.close()
         return render_template("checkin/admin_dashboard.html", checkins=rows)
 
+    @app.get("/admin/members")
+    def admin_members_page():
+        require_admin()
+        return render_template("checkin/admin_members.html")
+
+    def _query_members_list(q: str | None, tier: str | None, status: str | None, page: int, per_page: int):
+        con = connect_db(); cur = con.cursor()
+        where = ["1=1"]
+        params = []
+        like = None
+        if q:
+            like = f"%{q}%"
+            if using_postgres():
+                where.append("(m.name ILIKE %s OR m.email_lower ILIKE %s OR m.phone_e164 ILIKE %s)")
+                params += [like, like, like]
+            else:
+                where.append("(m.name LIKE ? OR m.email_lower LIKE ? OR m.phone_e164 LIKE ?)")
+                params += [like, like, like]
+        if status in ("active","inactive"):
+            where.append("m.status = %s" if using_postgres() else "m.status = ?")
+            params.append(status)
+        # Tier from memberships if available; else skip filter
+        tier_join = "LEFT JOIN memberships ms ON ms.member_id = m.id AND ms.status='active'"
+        if tier in ("essential","elevated","elite"):
+            where.append("(ms.tier = %s)" if using_postgres() else "(ms.tier = ?)")
+            params.append(tier)
+        base = f"""
+            FROM members m
+            {tier_join}
+            WHERE {' AND '.join(where)}
+        """
+        # total
+        cur.execute(("SELECT COUNT(*) "+base) if using_postgres() else ("SELECT COUNT(*) "+base), tuple(params))
+        total_row = cur.fetchone()
+        total = total_row[0] if isinstance(total_row, (list, tuple)) else (total_row.get('count') if total_row else 0)
+        # page
+        offset = (page-1)*per_page
+        order = "ORDER BY m.name ASC"
+        if using_postgres():
+            cur.execute(
+                f"""
+                SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, to_char(m.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
+                       ms.tier
+                {base}
+                {order}
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params + [per_page, offset])
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, m.updated_at AS updated_at,
+                       ms.tier
+                {base}
+                {order}
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [per_page, offset])
+            )
+        items = []
+        for r in cur.fetchall():
+            if using_postgres():
+                items.append({
+                    "id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
+                    "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at"),
+                    "tier": r.get("tier"),
+                })
+            else:
+                items.append({
+                    "id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4],
+                    "updated_at": r[5], "tier": r[6],
+                })
+        con.close()
+        return total, items
+
+    @app.get("/api/admin/members")
+    def api_admin_members():
+        require_admin()
+        q = (request.args.get("q") or "").strip()
+        tier = (request.args.get("tier") or "").strip().lower() or None
+        status = (request.args.get("status") or "").strip().lower() or None
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+            per_page = min(100, max(1, int(request.args.get("per_page", "25"))))
+        except Exception:
+            page, per_page = 1, 25
+        try:
+            total, items = _query_members_list(q or None, tier, status, page, per_page)
+            return jsonify({"ok": True, "page": page, "per_page": per_page, "total": total, "items": items})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/api/admin/members/<int:member_id>")
+    def api_admin_member_detail(member_id: int):
+        require_admin()
+        con = connect_db(); cur = con.cursor()
+        # member row
+        try:
+            cur.execute(
+                ("SELECT id, name, email_lower, phone_e164, status, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
+                 "SELECT id, name, email_lower, phone_e164, status, updated_at FROM members WHERE id=?"),
+                (member_id,)
+            )
+            r = cur.fetchone()
+            if not r:
+                con.close(); return jsonify({"ok": False, "error": "Not found"}), 404
+            if using_postgres():
+                member = {"id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
+                          "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at")}
+            else:
+                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4], "updated_at": r[5]}
+            # tier via memberships if available
+            try:
+                cur.execute(
+                    ("SELECT tier FROM memberships WHERE member_id=%s AND status='active' LIMIT 1" if using_postgres() else
+                     "SELECT tier FROM memberships WHERE member_id=? AND status='active' LIMIT 1"),
+                    (member_id,)
+                )
+                tr = cur.fetchone()
+                if tr:
+                    member["tier"] = (tr.get("tier") if using_postgres() else tr[0])
+            except Exception:
+                member["tier"] = None
+            # recent check-ins
+            cur.execute(
+                ("SELECT timestamp, method FROM check_ins WHERE member_id=%s ORDER BY timestamp DESC LIMIT 10" if using_postgres() else
+                 "SELECT timestamp, method FROM check_ins WHERE member_id=? ORDER BY timestamp DESC LIMIT 10"),
+                (member_id,)
+            )
+            rows = cur.fetchall()
+            recents = []
+            for rr in rows:
+                if using_postgres():
+                    recents.append({"timestamp": str(rr.get("timestamp")), "method": rr.get("method")})
+                else:
+                    recents.append({"timestamp": rr[0], "method": rr[1]})
+            con.close()
+            return jsonify({"ok": True, "member": member, "recent_checkins": recents})
+        except Exception as e:
+            try:
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
+
     @app.post("/admin/smtp_test")
     def admin_smtp_test():
         require_admin()
