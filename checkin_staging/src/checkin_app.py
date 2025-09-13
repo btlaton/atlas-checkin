@@ -176,7 +176,10 @@ def create_or_rotate_staff_pin(name: str, pin: str):
     pin_hash = _pbkdf2_hash(pin, salt)
     con = connect_db()
     cur = con.cursor()
-    cur.execute("INSERT INTO staff(name, pin_salt, pin_hash) VALUES (?, ?, ?)", (name, salt.hex(), pin_hash))
+    if using_postgres():
+        cur.execute("INSERT INTO staff(name, pin_salt, pin_hash) VALUES (%s, %s, %s)", (name, salt.hex(), pin_hash))
+    else:
+        cur.execute("INSERT INTO staff(name, pin_salt, pin_hash) VALUES (?, ?, ?)", (name, salt.hex(), pin_hash))
     con.commit()
     con.close()
 
@@ -708,7 +711,10 @@ def create_app():
         member = None
         if member_id_in.isdigit():
             con = connect_db(); cur = con.cursor()
-            cur.execute("SELECT * FROM members WHERE id = ? AND status='active'", (int(member_id_in),))
+            cur.execute(
+                ("SELECT * FROM members WHERE id = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE id = ? AND status='active'"),
+                (int(member_id_in),)
+            )
             member = cur.fetchone()
             con.close()
         elif qr_token:
@@ -745,15 +751,26 @@ def create_app():
             return jsonify([])
         like = f"%{q}%"
         con = connect_db(); cur = con.cursor()
-        cur.execute(
-            """
-            SELECT id, name FROM members
-            WHERE status='active' AND name LIKE ?
-            ORDER BY name ASC
-            LIMIT 5
-            """,
-            (like,)
-        )
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, name FROM members
+                WHERE status='active' AND name ILIKE %s
+                ORDER BY name ASC
+                LIMIT 5
+                """,
+                (like,)
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, name FROM members
+                WHERE status='active' AND name LIKE ?
+                ORDER BY name ASC
+                LIMIT 5
+                """,
+                (like,)
+            )
         rows = cur.fetchall(); con.close()
         return jsonify([{"id": r["id"], "name": r["name"]} for r in rows])
 
