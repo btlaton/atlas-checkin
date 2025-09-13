@@ -342,6 +342,8 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
         )
     existing = cur.fetchone()
     if existing:
+        # Resolve existing id across backends
+        existing_id = existing["id"] if using_postgres() else existing[0]
         if using_postgres():
             cur.execute(
                 """
@@ -349,7 +351,7 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 SET name = %s, email_lower = %s, phone_e164 = %s, membership_tier = %s, status = %s, updated_at = CURRENT_TIMESTAMP
                 WHERE id = %s
                 """,
-                (name, email_n, phone_n, membership_tier, status, existing[0]),
+                (name, email_n, phone_n, membership_tier, status, existing_id),
             )
         else:
             cur.execute(
@@ -358,9 +360,9 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 SET name = ?, email_lower = ?, phone_e164 = ?, membership_tier = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (name, email_n, phone_n, membership_tier, status, existing[0]),
+                (name, email_n, phone_n, membership_tier, status, existing_id),
             )
-        return existing[0]
+        return existing_id
     else:
         if using_postgres():
             cur.execute(
@@ -540,7 +542,8 @@ def create_app():
                     cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
                 else:
                     cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
-                tok = cur.fetchone()[0]
+                tok_row = cur.fetchone()
+                tok = (tok_row["qr_token"] if using_postgres() else tok_row[0]) if tok_row else None
                 if not tok:
                     if using_postgres():
                         cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
