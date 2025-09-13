@@ -10,7 +10,8 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+import socket
 
 # Optional Postgres (Supabase) support via psycopg
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -65,7 +66,57 @@ def _connect_postgres():
         raise RuntimeError(
             "DATABASE_URL is set but psycopg is not installed. Add psycopg[binary] to Dockerfile."
         )
-    return psycopg.connect(DATABASE_URL, row_factory=_pg_dict_row)
+    dsn = DATABASE_URL.strip()
+    try:
+        # Try to build an IPv4-preferring conninfo preserving hostname for TLS/SNI
+        if dsn.startswith("postgres://") or dsn.startswith("postgresql://"):
+            u = urlparse(dsn)
+            host = u.hostname or ""
+            port = u.port or 5432
+            dbname = (u.path or "/postgres").lstrip("/") or "postgres"
+            user = unquote(u.username) if u.username else None
+            password = unquote(u.password) if u.password else None
+            # Resolve IPv4 address for host (avoid IPv6 unreachable in some containers)
+            ipv4 = None
+            try:
+                infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+                if infos:
+                    ipv4 = infos[0][4][0]
+            except Exception:
+                ipv4 = None
+            # Extract sslmode if present; default to require
+            sslmode = "require"
+            try:
+                q = u.query or ""
+                for kv in q.split("&"):
+                    if not kv:
+                        continue
+                    k, _, v = kv.partition("=")
+                    if k == "sslmode" and v:
+                        sslmode = v
+                        break
+            except Exception:
+                pass
+            kwargs = {
+                "host": host,
+                "port": port,
+                "dbname": dbname,
+                "sslmode": sslmode,
+                "row_factory": _pg_dict_row,
+                "connect_timeout": 10,
+            }
+            if ipv4:
+                kwargs["hostaddr"] = ipv4
+            if user:
+                kwargs["user"] = user
+            if password:
+                kwargs["password"] = password
+            return psycopg.connect(**kwargs)
+        # Fallback: let psycopg parse conninfo/DSN itself
+        return psycopg.connect(dsn, row_factory=_pg_dict_row, connect_timeout=10)
+    except Exception:
+        # As a last resort, try the raw DSN without extra params
+        return psycopg.connect(dsn, row_factory=_pg_dict_row)
 
 
 def connect_db():
@@ -900,6 +951,66 @@ def create_app():
         name = request.args.get("name", "Admin")
         create_or_rotate_staff_pin(name, pin)
         return "OK"
+
+    @app.get("/admin/db_diag")
+    def admin_db_diag():
+        """Temporary diagnostics endpoint to debug DB connectivity.
+        Guarded by ENABLE_INIT_PIN=1 like the init endpoint so it's only available during setup.
+        Returns non-sensitive connection details and a SELECT 1 probe result.
+        """
+        if os.environ.get("ENABLE_INIT_PIN") != "1":
+            abort(403)
+        details = {
+            "using_postgres": using_postgres(),
+            "has_database_url": bool(DATABASE_URL),
+        }
+        # Parse DATABASE_URL shape without secrets
+        try:
+            dsn = (DATABASE_URL or "").strip()
+            if dsn.startswith("postgres://") or dsn.startswith("postgresql://"):
+                u = urlparse(dsn)
+                details.update({
+                    "dsn_kind": "uri",
+                    "host": u.hostname,
+                    "port": u.port,
+                    "dbname": (u.path or "/postgres").lstrip("/") or "postgres",
+                    "user": (u.username or ""),
+                })
+            elif dsn:
+                details.update({
+                    "dsn_kind": "conninfo",
+                })
+                # crude parse of key=value tokens
+                parts = {}
+                for tok in dsn.split():
+                    if "=" in tok:
+                        k, v = tok.split("=", 1)
+                        parts[k] = v
+                details.update({
+                    "host": parts.get("host"),
+                    "port": parts.get("port"),
+                    "dbname": parts.get("dbname"),
+                    "user": parts.get("user"),
+                })
+            user = details.get("user") or ""
+            host = details.get("host") or ""
+            details["pooler_mode"] = bool(host and host.endswith(".pooler.supabase.com"))
+            # In pooler mode, user must include ".<project_ref>"
+            details["user_has_project_suffix"] = ("." in user) if details["pooler_mode"] else ("." not in user)
+        except Exception:
+            pass
+
+        probe = {"ok": False, "error": None}
+        try:
+            con = connect_db(); cur = con.cursor()
+            cur.execute("SELECT 1")
+            _ = cur.fetchone()
+            con.close()
+            probe["ok"] = True
+        except Exception as e:
+            probe["error"] = str(e)
+        details["probe"] = probe
+        return jsonify(details)
 
     return app
 
