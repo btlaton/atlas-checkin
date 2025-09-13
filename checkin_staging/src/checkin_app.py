@@ -10,7 +10,8 @@ from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+import socket
 
 # Optional Postgres (Supabase) support via psycopg
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -65,7 +66,57 @@ def _connect_postgres():
         raise RuntimeError(
             "DATABASE_URL is set but psycopg is not installed. Add psycopg[binary] to Dockerfile."
         )
-    return psycopg.connect(DATABASE_URL, row_factory=_pg_dict_row)
+    dsn = DATABASE_URL.strip()
+    try:
+        # Try to build an IPv4-preferring conninfo preserving hostname for TLS/SNI
+        if dsn.startswith("postgres://") or dsn.startswith("postgresql://"):
+            u = urlparse(dsn)
+            host = u.hostname or ""
+            port = u.port or 5432
+            dbname = (u.path or "/postgres").lstrip("/") or "postgres"
+            user = unquote(u.username) if u.username else None
+            password = unquote(u.password) if u.password else None
+            # Resolve IPv4 address for host (avoid IPv6 unreachable in some containers)
+            ipv4 = None
+            try:
+                infos = socket.getaddrinfo(host, None, socket.AF_INET, socket.SOCK_STREAM)
+                if infos:
+                    ipv4 = infos[0][4][0]
+            except Exception:
+                ipv4 = None
+            # Extract sslmode if present; default to require
+            sslmode = "require"
+            try:
+                q = u.query or ""
+                for kv in q.split("&"):
+                    if not kv:
+                        continue
+                    k, _, v = kv.partition("=")
+                    if k == "sslmode" and v:
+                        sslmode = v
+                        break
+            except Exception:
+                pass
+            kwargs = {
+                "host": host,
+                "port": port,
+                "dbname": dbname,
+                "sslmode": sslmode,
+                "row_factory": _pg_dict_row,
+                "connect_timeout": 10,
+            }
+            if ipv4:
+                kwargs["hostaddr"] = ipv4
+            if user:
+                kwargs["user"] = user
+            if password:
+                kwargs["password"] = password
+            return psycopg.connect(**kwargs)
+        # Fallback: let psycopg parse conninfo/DSN itself
+        return psycopg.connect(dsn, row_factory=_pg_dict_row, connect_timeout=10)
+    except Exception:
+        # As a last resort, try the raw DSN without extra params
+        return psycopg.connect(dsn, row_factory=_pg_dict_row)
 
 
 def connect_db():
@@ -316,9 +367,12 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 """
                 INSERT INTO members(external_id, name, email_lower, phone_e164, membership_tier, status)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (external_id, name, email_n, phone_n, membership_tier, status),
             )
+            rid = cur.fetchone()[0]
+            return rid
         else:
             cur.execute(
                 """
@@ -327,7 +381,7 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 """,
                 (external_id, name, email_n, phone_n, membership_tier, status),
             )
-        return cur.lastrowid
+            return cur.lastrowid
 
 
 def send_email(to_email: str, subject: str, body: str, body_html: str | None = None, inline_images: list | None = None) -> bool:
@@ -456,71 +510,80 @@ def create_app():
     @app.post("/api/upload_csv")
     def upload_csv():
         require_admin()
-        f = request.files.get("file")
-        if not f:
-            return jsonify({"ok": False, "error": "No file uploaded"}), 400
-        decoded = f.stream.read().decode("utf-8", errors="ignore")
-        reader = csv.DictReader(decoded.splitlines())
-        con = connect_db()
-        cur = con.cursor()
-        commit = request.args.get("commit", "1") in ("1", "true", "yes")
-        deactivate_missing = request.args.get("deactivate_missing", "0") in ("1", "true", "yes")
+        try:
+            f = request.files.get("file")
+            if not f:
+                return jsonify({"ok": False, "error": "No file uploaded"}), 400
+            decoded = f.stream.read().decode("utf-8", errors="ignore")
+            reader = csv.DictReader(decoded.splitlines())
+            con = connect_db()
+            cur = con.cursor()
+            commit = request.args.get("commit", "1") in ("1", "true", "yes")
+            deactivate_missing = request.args.get("deactivate_missing", "0") in ("1", "true", "yes")
 
-        parsed = []
-        for row in reader:
-            mapped = _map_csv_row(row)
-            if mapped:
-                parsed.append(mapped)
+            parsed = []
+            for row in reader:
+                mapped = _map_csv_row(row)
+                if mapped:
+                    parsed.append(mapped)
 
-        csv_keys = set()
-        for p in parsed:
-            key = p["external_id"] or normalize_email(p["email"]) or normalize_phone(p["phone"]) or None
-            if key:
-                csv_keys.add(key)
+            csv_keys = set()
+            for p in parsed:
+                key = p["external_id"] or normalize_email(p["email"]) or normalize_phone(p["phone"]) or None
+                if key:
+                    csv_keys.add(key)
 
-        activated = 0
-        for p in parsed:
-            mid = upsert_member(cur, p["external_id"], p["name"], p["email"], p["phone"], p["tier"], p["status"])
-            if using_postgres():
-                cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
-            else:
-                cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
-            tok = cur.fetchone()[0]
-            if not tok:
+            activated = 0
+            for p in parsed:
+                mid = upsert_member(cur, p["external_id"], p["name"], p["email"], p["phone"], p["tier"], p["status"])
                 if using_postgres():
-                    cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
+                    cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
                 else:
-                    cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
-            if p["status"] == "active":
-                activated += 1
+                    cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
+                tok = cur.fetchone()[0]
+                if not tok:
+                    if using_postgres():
+                        cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
+                    else:
+                        cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
+                if p["status"] == "active":
+                    activated += 1
 
-        deactivated = 0
-        if deactivate_missing and csv_keys:
-            cur.execute("SELECT id, external_id, email_lower, phone_e164 FROM members WHERE status='active'")
-            missing_ids = []
-            for r in cur.fetchall():
-                key = r["external_id"] or r["email_lower"] or r["phone_e164"]
-                if key and key not in csv_keys:
-                    missing_ids.append(r["id"])
-            if missing_ids and commit:
-                if using_postgres():
-                    for i in missing_ids:
-                        cur.execute("UPDATE members SET status='inactive' WHERE id=%s", (i,))
-                else:
-                    cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
-            deactivated = len(missing_ids)
+            deactivated = 0
+            if deactivate_missing and csv_keys:
+                cur.execute("SELECT id, external_id, email_lower, phone_e164 FROM members WHERE status='active'")
+                missing_ids = []
+                for r in cur.fetchall():
+                    key = r["external_id"] or r["email_lower"] or r["phone_e164"]
+                    if key and key not in csv_keys:
+                        missing_ids.append(r["id"])
+                if missing_ids and commit:
+                    if using_postgres():
+                        for i in missing_ids:
+                            cur.execute("UPDATE members SET status='inactive' WHERE id=%s", (i,))
+                    else:
+                        cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
+                deactivated = len(missing_ids)
 
-        if commit:
-            con.commit()
-        con.close()
-        return jsonify({
-            "ok": True,
-            "imported": len(parsed),
-            "activated": activated,
-            "deactivated": deactivated,
-            "deactivate_missing": deactivate_missing,
-            "committed": commit,
-        })
+            if commit:
+                con.commit()
+            con.close()
+            return jsonify({
+                "ok": True,
+                "imported": len(parsed),
+                "activated": activated,
+                "deactivated": deactivated,
+                "deactivate_missing": deactivate_missing,
+                "committed": commit,
+            })
+        except Exception as e:
+            try:
+                # Best effort rollback/close
+                con.rollback()
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": f"Import failed: {str(e)}"}), 500
 
     @app.post("/api/import_preview")
     def import_preview():
@@ -900,6 +963,66 @@ def create_app():
         name = request.args.get("name", "Admin")
         create_or_rotate_staff_pin(name, pin)
         return "OK"
+
+    @app.get("/admin/db_diag")
+    def admin_db_diag():
+        """Temporary diagnostics endpoint to debug DB connectivity.
+        Guarded by ENABLE_INIT_PIN=1 like the init endpoint so it's only available during setup.
+        Returns non-sensitive connection details and a SELECT 1 probe result.
+        """
+        if os.environ.get("ENABLE_INIT_PIN") != "1":
+            abort(403)
+        details = {
+            "using_postgres": using_postgres(),
+            "has_database_url": bool(DATABASE_URL),
+        }
+        # Parse DATABASE_URL shape without secrets
+        try:
+            dsn = (DATABASE_URL or "").strip()
+            if dsn.startswith("postgres://") or dsn.startswith("postgresql://"):
+                u = urlparse(dsn)
+                details.update({
+                    "dsn_kind": "uri",
+                    "host": u.hostname,
+                    "port": u.port,
+                    "dbname": (u.path or "/postgres").lstrip("/") or "postgres",
+                    "user": (u.username or ""),
+                })
+            elif dsn:
+                details.update({
+                    "dsn_kind": "conninfo",
+                })
+                # crude parse of key=value tokens
+                parts = {}
+                for tok in dsn.split():
+                    if "=" in tok:
+                        k, v = tok.split("=", 1)
+                        parts[k] = v
+                details.update({
+                    "host": parts.get("host"),
+                    "port": parts.get("port"),
+                    "dbname": parts.get("dbname"),
+                    "user": parts.get("user"),
+                })
+            user = details.get("user") or ""
+            host = details.get("host") or ""
+            details["pooler_mode"] = bool(host and host.endswith(".pooler.supabase.com"))
+            # In pooler mode, user must include ".<project_ref>"
+            details["user_has_project_suffix"] = ("." in user) if details["pooler_mode"] else ("." not in user)
+        except Exception:
+            pass
+
+        probe = {"ok": False, "error": None}
+        try:
+            con = connect_db(); cur = con.cursor()
+            cur.execute("SELECT 1")
+            _ = cur.fetchone()
+            con.close()
+            probe["ok"] = True
+        except Exception as e:
+            probe["error"] = str(e)
+        details["probe"] = probe
+        return jsonify(details)
 
     return app
 
