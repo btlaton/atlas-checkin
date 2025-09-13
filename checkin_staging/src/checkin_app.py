@@ -520,16 +520,18 @@ def create_app():
             con = connect_db(); cur = con.cursor()
             # Today totals
             if using_postgres():
-                cur.execute("SELECT COUNT(*) FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
             else:
-                cur.execute("SELECT COUNT(*) FROM check_ins WHERE date(timestamp) = date('now')")
-            today_total = (cur.fetchone() or [0])[0]
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+            row = cur.fetchone() or {}
+            today_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
 
             if using_postgres():
-                cur.execute("SELECT COUNT(DISTINCT member_id) FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+                cur.execute("SELECT COUNT(DISTINCT member_id) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
             else:
-                cur.execute("SELECT COUNT(DISTINCT member_id) FROM check_ins WHERE date(timestamp) = date('now')")
-            today_unique = (cur.fetchone() or [0])[0]
+                cur.execute("SELECT COUNT(DISTINCT member_id) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+            row = cur.fetchone() or {}
+            today_unique = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
 
             # Recent check-ins (last 10)
             cur.execute(
@@ -554,14 +556,22 @@ def create_app():
 
             # 7-day trend (fill missing days in Python)
             if using_postgres():
-                cur.execute("SELECT date(timestamp) AS d, COUNT(*) FROM check_ins WHERE timestamp >= CURRENT_DATE - INTERVAL '6 days' GROUP BY d ORDER BY d ASC")
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE - INTERVAL '6 days' GROUP BY d ORDER BY d ASC")
                 rows = cur.fetchall()
-                counts = {str(r.get('d')): r.get('count') if 'count' in r else r[1] for r in rows}
+                counts = {}
+                for r in rows:
+                    dval = (r.get('d') if not isinstance(r, (list, tuple)) else r[0])
+                    cval = (r.get('c') if not isinstance(r, (list, tuple)) else r[1])
+                    counts[str(dval)] = int(cval or 0)
             else:
-                cur.execute("SELECT date(timestamp) AS d, COUNT(*) FROM check_ins WHERE date(timestamp) >= date('now','-6 day') GROUP BY date(timestamp) ORDER BY d ASC")
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) AS c FROM check_ins WHERE date(timestamp) >= date('now','-6 day') GROUP BY d ORDER BY d ASC")
                 rows = cur.fetchall()
-                counts = {r[0]: r[1]}
-                counts = {r[0]: r[1] for r in rows}
+                counts = {}
+                for r in rows:
+                    # sqlite row supports key access
+                    dval = r['d'] if hasattr(r, '__getitem__') and 'd' in r.keys() else (r[0] if isinstance(r,(list,tuple)) else r[0])
+                    cval = r['c'] if hasattr(r, '__getitem__') and 'c' in r.keys() else (r[1] if isinstance(r,(list,tuple)) else r[1])
+                    counts[str(dval)] = int(cval or 0)
             from datetime import date, timedelta
             today = date.today()
             trend = []
