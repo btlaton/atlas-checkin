@@ -367,9 +367,12 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 """
                 INSERT INTO members(external_id, name, email_lower, phone_e164, membership_tier, status)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (external_id, name, email_n, phone_n, membership_tier, status),
             )
+            rid = cur.fetchone()[0]
+            return rid
         else:
             cur.execute(
                 """
@@ -378,7 +381,7 @@ def upsert_member(cur, external_id: str | None, name: str, email: str | None, ph
                 """,
                 (external_id, name, email_n, phone_n, membership_tier, status),
             )
-        return cur.lastrowid
+            return cur.lastrowid
 
 
 def send_email(to_email: str, subject: str, body: str, body_html: str | None = None, inline_images: list | None = None) -> bool:
@@ -507,71 +510,80 @@ def create_app():
     @app.post("/api/upload_csv")
     def upload_csv():
         require_admin()
-        f = request.files.get("file")
-        if not f:
-            return jsonify({"ok": False, "error": "No file uploaded"}), 400
-        decoded = f.stream.read().decode("utf-8", errors="ignore")
-        reader = csv.DictReader(decoded.splitlines())
-        con = connect_db()
-        cur = con.cursor()
-        commit = request.args.get("commit", "1") in ("1", "true", "yes")
-        deactivate_missing = request.args.get("deactivate_missing", "0") in ("1", "true", "yes")
+        try:
+            f = request.files.get("file")
+            if not f:
+                return jsonify({"ok": False, "error": "No file uploaded"}), 400
+            decoded = f.stream.read().decode("utf-8", errors="ignore")
+            reader = csv.DictReader(decoded.splitlines())
+            con = connect_db()
+            cur = con.cursor()
+            commit = request.args.get("commit", "1") in ("1", "true", "yes")
+            deactivate_missing = request.args.get("deactivate_missing", "0") in ("1", "true", "yes")
 
-        parsed = []
-        for row in reader:
-            mapped = _map_csv_row(row)
-            if mapped:
-                parsed.append(mapped)
+            parsed = []
+            for row in reader:
+                mapped = _map_csv_row(row)
+                if mapped:
+                    parsed.append(mapped)
 
-        csv_keys = set()
-        for p in parsed:
-            key = p["external_id"] or normalize_email(p["email"]) or normalize_phone(p["phone"]) or None
-            if key:
-                csv_keys.add(key)
+            csv_keys = set()
+            for p in parsed:
+                key = p["external_id"] or normalize_email(p["email"]) or normalize_phone(p["phone"]) or None
+                if key:
+                    csv_keys.add(key)
 
-        activated = 0
-        for p in parsed:
-            mid = upsert_member(cur, p["external_id"], p["name"], p["email"], p["phone"], p["tier"], p["status"])
-            if using_postgres():
-                cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
-            else:
-                cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
-            tok = cur.fetchone()[0]
-            if not tok:
+            activated = 0
+            for p in parsed:
+                mid = upsert_member(cur, p["external_id"], p["name"], p["email"], p["phone"], p["tier"], p["status"])
                 if using_postgres():
-                    cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
+                    cur.execute("SELECT qr_token FROM members WHERE id=%s", (mid,))
                 else:
-                    cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
-            if p["status"] == "active":
-                activated += 1
+                    cur.execute("SELECT qr_token FROM members WHERE id=?", (mid,))
+                tok = cur.fetchone()[0]
+                if not tok:
+                    if using_postgres():
+                        cur.execute("UPDATE members SET qr_token=%s WHERE id=%s", (secrets.token_urlsafe(24), mid))
+                    else:
+                        cur.execute("UPDATE members SET qr_token=? WHERE id=?", (secrets.token_urlsafe(24), mid))
+                if p["status"] == "active":
+                    activated += 1
 
-        deactivated = 0
-        if deactivate_missing and csv_keys:
-            cur.execute("SELECT id, external_id, email_lower, phone_e164 FROM members WHERE status='active'")
-            missing_ids = []
-            for r in cur.fetchall():
-                key = r["external_id"] or r["email_lower"] or r["phone_e164"]
-                if key and key not in csv_keys:
-                    missing_ids.append(r["id"])
-            if missing_ids and commit:
-                if using_postgres():
-                    for i in missing_ids:
-                        cur.execute("UPDATE members SET status='inactive' WHERE id=%s", (i,))
-                else:
-                    cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
-            deactivated = len(missing_ids)
+            deactivated = 0
+            if deactivate_missing and csv_keys:
+                cur.execute("SELECT id, external_id, email_lower, phone_e164 FROM members WHERE status='active'")
+                missing_ids = []
+                for r in cur.fetchall():
+                    key = r["external_id"] or r["email_lower"] or r["phone_e164"]
+                    if key and key not in csv_keys:
+                        missing_ids.append(r["id"])
+                if missing_ids and commit:
+                    if using_postgres():
+                        for i in missing_ids:
+                            cur.execute("UPDATE members SET status='inactive' WHERE id=%s", (i,))
+                    else:
+                        cur.executemany("UPDATE members SET status='inactive' WHERE id=?", [(i,) for i in missing_ids])
+                deactivated = len(missing_ids)
 
-        if commit:
-            con.commit()
-        con.close()
-        return jsonify({
-            "ok": True,
-            "imported": len(parsed),
-            "activated": activated,
-            "deactivated": deactivated,
-            "deactivate_missing": deactivate_missing,
-            "committed": commit,
-        })
+            if commit:
+                con.commit()
+            con.close()
+            return jsonify({
+                "ok": True,
+                "imported": len(parsed),
+                "activated": activated,
+                "deactivated": deactivated,
+                "deactivate_missing": deactivate_missing,
+                "committed": commit,
+            })
+        except Exception as e:
+            try:
+                # Best effort rollback/close
+                con.rollback()
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": f"Import failed: {str(e)}"}), 500
 
     @app.post("/api/import_preview")
     def import_preview():
