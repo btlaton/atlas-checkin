@@ -49,6 +49,7 @@ def get_db_path() -> str:
 DB_PATH = get_db_path()
 DUP_WINDOW_MINUTES = int(os.environ.get("CHECKIN_DUP_WINDOW_MINUTES", "5"))
 SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me")
+STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
 
 
 def using_postgres() -> bool:
@@ -512,6 +513,101 @@ def create_app():
     def staff_dashboard():
         require_admin()
         return render_template("checkin/staff_dashboard.html")
+
+    # --- Staff-assisted Signup (MVP scaffold) ---
+    def require_staff_signup_auth():
+        if not session.get("staff_signup_auth"):
+            return redirect(url_for("staff_signup_login"))
+        return None
+
+    @app.get("/staff/signup/login")
+    def staff_signup_login():
+        return render_template("checkin/staff_signup_login.html")
+
+    @app.post("/staff/signup/login")
+    def staff_signup_login_post():
+        pw = request.form.get("password", "")
+        if STAFF_SIGNUP_PASSWORD and pw == STAFF_SIGNUP_PASSWORD:
+            session["staff_signup_auth"] = True
+            return redirect(url_for("staff_signup"))
+        err = "Incorrect password" if STAFF_SIGNUP_PASSWORD else "Not configured (set STAFF_SIGNUP_PASSWORD)"
+        return render_template("checkin/staff_signup_login.html", error=err)
+
+    @app.get("/staff/signup")
+    def staff_signup():
+        # separate from PIN; requires STAFF_SIGNUP_PASSWORD
+        redir = require_staff_signup_auth()
+        if redir:
+            return redir
+        tiers = [
+            {"id": os.environ.get("STRIPE_PRICE_ESSENTIAL"), "label": "Essential"},
+            {"id": os.environ.get("STRIPE_PRICE_ELEVATED"), "label": "Elevated"},
+            {"id": os.environ.get("STRIPE_PRICE_ELITE"), "label": "Elite"},
+        ]
+        return render_template("checkin/staff_signup.html", tiers=tiers)
+
+    @app.post("/api/signup/checkout_session")
+    def api_signup_checkout_session():
+        # Minimal validation; Stripe integration optional if not configured
+        redir = require_staff_signup_auth()
+        if redir:
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        payload = request.get_json(silent=True) or {}
+        name = (payload.get("name") or "").strip()
+        email = (payload.get("email") or "").strip()
+        tier_price = (payload.get("price_id") or "").strip()
+        phone = (payload.get("phone") or "").strip()
+        birthday = (payload.get("birthday") or "").strip()
+        address = (payload.get("address") or "").strip()
+        if not name or not email or not tier_price:
+            return jsonify({"ok": False, "error": "Missing required fields"}), 400
+        api_key = os.environ.get("STRIPE_API_KEY")
+        success_url = os.environ.get("JOIN_SUCCESS_URL", request.url_root.rstrip("/") + "/join/success")
+        cancel_url = os.environ.get("JOIN_CANCEL_URL", request.url_root.rstrip("/") + "/join/cancel")
+        if not api_key:
+            return jsonify({"ok": False, "error": "Stripe not configured"}), 501
+        try:
+            import stripe
+            stripe.api_key = api_key
+            # Create or reuse Customer
+            customer = stripe.Customer.create(
+                name=name,
+                email=email,
+                phone=phone or None,
+                address={"line1": address} if address else None,
+                metadata={"birthday": birthday} if birthday else None,
+            )
+            session_obj = stripe.checkout.Session.create(
+                mode="subscription",
+                customer=customer.id,
+                line_items=[{"price": tier_price, "quantity": 1}],
+                success_url=success_url + "?session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=cancel_url,
+                metadata={"app_member_email": email, "app_member_name": name},
+            )
+            return jsonify({"ok": True, "url": session_obj.url})
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Stripe error: {str(e)}"}), 500
+
+    @app.post("/webhooks/stripe")
+    def stripe_webhook():
+        # Scaffold: verify if possible; log and return 200
+        try:
+            data = request.get_data()
+            sig = request.headers.get("Stripe-Signature", "")
+            secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+            event = None
+            if secret:
+                try:
+                    import stripe
+                    event = stripe.Webhook.construct_event(data, sig, secret)
+                except Exception as e:
+                    return ("Bad signature", 400)
+            # Basic handling stub
+            # TODO: on checkout.session.completed, fetch subscription/customer; upsert member + memberships; send QR email
+            return ("OK", 200)
+        except Exception:
+            return ("OK", 200)
 
     @app.get("/api/staff/metrics")
     def api_staff_metrics():
