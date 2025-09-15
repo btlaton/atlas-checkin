@@ -583,6 +583,7 @@ def create_app():
                 line_items=[{"price": tier_price, "quantity": 1}],
                 success_url=success_url + "?session_id={CHECKOUT_SESSION_ID}",
                 cancel_url=cancel_url,
+                locale="en",
                 metadata={"app_member_email": email, "app_member_name": name},
             )
             return jsonify({"ok": True, "url": session_obj.url})
@@ -591,23 +592,126 @@ def create_app():
 
     @app.post("/webhooks/stripe")
     def stripe_webhook():
-        # Scaffold: verify if possible; log and return 200
+        # Verify signature and handle key subscription events
+        payload = request.get_data()
+        sig = request.headers.get("Stripe-Signature", "")
+        secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
         try:
-            data = request.get_data()
-            sig = request.headers.get("Stripe-Signature", "")
-            secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
-            event = None
-            if secret:
+            import stripe
+            if not secret:
+                # If not configured, acknowledge to avoid retries during scaffold
+                return ("OK", 200)
+            event = stripe.Webhook.construct_event(payload, sig, secret)
+        except Exception:
+            return ("Bad signature", 400)
+
+        try:
+            if event and event.get("type") == "checkout.session.completed":
+                sess = event["data"]["object"]
+                stripe.api_key = os.environ.get("STRIPE_API_KEY")
+                # Retrieve full session with line items
+                session_id = sess.get("id")
                 try:
-                    import stripe
-                    event = stripe.Webhook.construct_event(data, sig, secret)
-                except Exception as e:
-                    return ("Bad signature", 400)
-            # Basic handling stub
-            # TODO: on checkout.session.completed, fetch subscription/customer; upsert member + memberships; send QR email
+                    sess_full = stripe.checkout.Session.retrieve(session_id, expand=["line_items", "customer", "subscription"])
+                except Exception:
+                    sess_full = sess
+                cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
+                customer_id = (cust.get("id") if cust else sess_full.get("customer"))
+                customer_email = None
+                if sess_full.get("customer_details"):
+                    customer_email = sess_full["customer_details"].get("email")
+                if not customer_email:
+                    customer_email = sess_full.get("customer_email") or (sess_full.get("metadata") or {}).get("app_member_email")
+                customer_name = (sess_full.get("metadata") or {}).get("app_member_name")
+
+                # Extract price and subscription ids
+                price_id = None
+                if sess_full.get("line_items") and sess_full["line_items"].get("data"):
+                    li = sess_full["line_items"]["data"][0]
+                    if li.get("price"):
+                        price_id = li["price"].get("id")
+                subscription_id = sess_full.get("subscription") if isinstance(sess_full.get("subscription"), str) else (sess_full.get("subscription") or {}).get("id")
+
+                # Upsert member and membership
+                if customer_email:
+                    email_n = normalize_email(customer_email)
+                    name = customer_name or (cust.get("name") if cust else None) or "Member"
+                    phone = (cust.get("phone") if cust else None)
+                    con = connect_db(); cur = con.cursor()
+                    # Find existing member by email
+                    if using_postgres():
+                        cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
+                    else:
+                        cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
+                    row = cur.fetchone()
+                    if row:
+                        member_id = row[0] if isinstance(row, (list, tuple)) else (row.get("id") if isinstance(row, dict) else row[0])
+                        # Update basic fields + stripe_customer_id
+                        if using_postgres():
+                            cur.execute("UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (name, normalize_phone(phone), customer_id, member_id))
+                        else:
+                            cur.execute("UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (name, normalize_phone(phone), customer_id, member_id))
+                    else:
+                        # Insert new member
+                        if using_postgres():
+                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id", (name, email_n, normalize_phone(phone), customer_id))
+                            member_id = cur.fetchone()[0]
+                        else:
+                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)", (name, email_n, normalize_phone(phone), 'active', customer_id))
+                            member_id = cur.lastrowid
+
+                    # Ensure QR token
+                    if using_postgres():
+                        cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
+                    else:
+                        cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
+                    tokrow = cur.fetchone()
+                    token = (tokrow[0] if isinstance(tokrow, (list, tuple)) else (tokrow.get("qr_token") if tokrow else None)) if tokrow else None
+                    if not token:
+                        token = secrets.token_urlsafe(24)
+                        if using_postgres():
+                            cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
+                        else:
+                            cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+
+                    # Upsert membership (if table exists)
+                    try:
+                        if using_postgres():
+                            cur.execute("SELECT 1 FROM memberships WHERE member_id=%s LIMIT 1", (member_id,))
+                        else:
+                            cur.execute("SELECT 1 FROM memberships WHERE member_id=? LIMIT 1", (member_id,))
+                        exists = cur.fetchone() is not None
+                        if exists:
+                            if using_postgres():
+                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=%s, price_id=%s, status='active', last_seen_at=NOW() WHERE member_id=%s", (subscription_id, price_id, member_id))
+                            else:
+                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=?, price_id=?, status='active', last_seen_at=CURRENT_TIMESTAMP WHERE member_id=?", (subscription_id, price_id, member_id))
+                        else:
+                            if using_postgres():
+                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (%s,'stripe',%s,%s,'active',CURRENT_DATE, NOW())", (member_id, subscription_id, price_id))
+                            else:
+                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (?,?,?,?, 'active', date('now'), CURRENT_TIMESTAMP)", (member_id, 'stripe', subscription_id, price_id))
+                    except Exception:
+                        # memberships table may not exist; ignore gracefully
+                        pass
+
+                    con.commit(); con.close()
+
+                    # Send QR email
+                    send_email(customer_email, "Your Atlas Gym Check-In Code", (
+                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!"))
             return ("OK", 200)
         except Exception:
             return ("OK", 200)
+
+    # --- Signup success/cancel placeholders ---
+    @app.get("/join/success")
+    def join_success():
+        return render_template("checkin/join_success.html")
+
+    @app.get("/join/cancel")
+    def join_cancel():
+        return render_template("checkin/join_cancel.html")
 
     @app.get("/api/staff/metrics")
     def api_staff_metrics():
