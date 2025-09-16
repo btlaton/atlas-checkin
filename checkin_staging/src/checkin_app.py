@@ -870,8 +870,7 @@ def create_app():
                 pass
             return jsonify({"ok": False, "error": str(e)}), 500
 
-
-@app.get("/admin/members")
+    @app.get("/admin/members")
     def admin_members_page():
         if not session.get("admin"):
             return redirect(url_for("admin_login", next="/admin/members"))
