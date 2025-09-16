@@ -14,14 +14,24 @@
     if (statusSub) statusSub.textContent = sub || '';
   }
 
+  function applyStatusMessage(msg) {
+    if (!msg) {
+      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+      if (statusRotator) statusRotator.dataset.level = '';
+      return;
+    }
+    showStatusMessage(msg.label || '', msg.subtext || '');
+    if (statusRotator) statusRotator.dataset.level = msg.level || '';
+  }
+
   function startStatusRotation(messages) {
     if (!messages || !messages.length) {
-      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+      applyStatusMessage(null);
       return;
     }
     statusMessages = messages.slice();
     statusIndex = 0;
-    showStatusMessage(statusMessages[0].label, statusMessages[0].subtext);
+    applyStatusMessage(statusMessages[0]);
     if (statusTimer) clearInterval(statusTimer);
     if (statusMessages.length <= 1) {
       statusTimer = null;
@@ -30,8 +40,7 @@
     statusTimer = setInterval(() => {
       if (!statusMessages.length) return;
       statusIndex = (statusIndex + 1) % statusMessages.length;
-      const msg = statusMessages[statusIndex];
-      showStatusMessage(msg.label, msg.subtext);
+      applyStatusMessage(statusMessages[statusIndex]);
     }, 10000);
   }
 
@@ -40,21 +49,20 @@
       const r = await fetch('/api/kiosk/status');
       const j = await r.json();
       if (!j.ok) {
-          if (statusRotator) statusRotator.dataset.level = '';
-          showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+          if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+          statusMessages = [];
+          applyStatusMessage(null);
           return;
       }
-      const messages = (j.messages || []).map(m => ({ label: m.label || '', subtext: m.subtext || '' }));
+      const messages = (j.messages || []).map(m => ({ label: m.label || '', subtext: m.subtext || '', level: m.level || '' }));
       if (!messages.length && j.busyness) {
-        messages.push({ label: j.busyness.label || '', subtext: j.busyness.detail || '' });
-      }
-      if (statusRotator) {
-        statusRotator.dataset.level = (j.busyness && j.busyness.level) || '';
+        messages.push({ label: j.busyness.label || '', subtext: j.busyness.detail || '', level: j.busyness.level || '' });
       }
       startStatusRotation(messages);
     } catch (err) {
-      if (statusRotator) statusRotator.dataset.level = '';
-      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+      if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+      statusMessages = [];
+      applyStatusMessage(null);
     }
   }
 
@@ -256,7 +264,7 @@
     rafId = requestAnimationFrame(tick);
   }
 
-  showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+  applyStatusMessage(null);
   loadStatus();
   setInterval(loadStatus, 300000);
   checkSupport();

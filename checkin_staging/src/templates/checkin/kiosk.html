@@ -7,6 +7,7 @@
     <meta name="theme-color" content="#ffffff">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="/static/manifest.webmanifest">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap" />
     <link rel="stylesheet" href="/static/checkin/kiosk_modern.css" />
   </head>
   <body class="kiosk-body">
@@ -26,11 +27,11 @@
 
       <main class="kiosk-main">
         <section class="card scan-card" id="scan-panel">
-          <div class="card-head">
-            <h2>Scan your member QR code</h2>
-            <p class="subhead">Tap below, then hold your code in the frame.</p>
+          <div class="scan-head">
+            <h2>Check-In with your QR code</h2>
+            <p class="subhead">Tap to start the camera, then hold your code in the frame.</p>
           </div>
-          <button id="scan-button" class="scan-button">Start camera</button>
+          <button id="scan-button" class="scan-button scan-button-circle">Start scanning</button>
           <div class="scan-preview hidden" id="scan-wrap">
             <div class="preview-frame">
               <video id="preview" playsinline muted></video>
@@ -55,12 +56,11 @@
             </div>
           </form>
           <div id="email-result" class="form-status" role="status" aria-live="polite"></div>
-          <p class="card-hint">Need a hand? Tap a coach — we're right here.</p>
         </section>
       </main>
 
       <footer class="kiosk-footer">
-        <span>GymSense — Radical simplicity. Transparent affordability.</span>
+        <span><span class="footer-brand">GymSense</span> — Radical simplicity. Transparent affordability.</span>
       </footer>
     </div>
 

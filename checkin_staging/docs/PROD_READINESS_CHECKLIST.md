@@ -6,7 +6,6 @@ Use this list to track the final work needed before enabling the Atlas Check-In 
 - [ ] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
 - [ ] Kiosk QR scan flow (camera + fallback) verified
 - [ ] Email-based QR resend flow (enter email, confirm message + delivery)
-- [ ] QR resend to email (verify SendGrid message in inbox/spam)
 - [ ] Admin PIN login, dashboard load, and recent check-in listing
 - [ ] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
 - [ ] CSV import preview (`/admin/members/import/preview`) on latest Mindbody export
