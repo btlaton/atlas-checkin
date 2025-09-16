@@ -14,15 +14,19 @@
       <header class="kiosk-header" id="logo">
         <div class="brand-block">
           <h1>The Atlas Gym</h1>
-          <p>Radical simplicity. Transparent affordability.</p>
+          <p>23282 Del Lago Dr, Laguna Hills, CA 92653</p>
         </div>
-        <div class="status-pill" id="scan-support">Ready to scan</div>
+        <div class="status-stack">
+          <div class="status-rotator" id="status-rotator">
+            <span class="status-label" id="status-label"></span>
+            <span class="status-sub" id="status-sub"></span>
+          </div>
+        </div>
       </header>
 
       <main class="kiosk-main">
         <section class="card scan-card" id="scan-panel">
           <div class="card-head">
-            <span class="step">Step 1</span>
             <h2>Scan your member QR code</h2>
             <p class="subhead">Tap below, then hold your code in the frame.</p>
           </div>
@@ -40,16 +44,14 @@
 
         <section class="card email-card">
           <div class="card-head">
-            <span class="step">Step 2</span>
-            <h2>Email check-in or resend</h2>
-            <p class="subhead">Enter the email on your membership. We'll handle the rest.</p>
+            <h2>Need a fresh QR code?</h2>
+            <p class="subhead">Enter the email on your membership and we'll resend it instantly.</p>
           </div>
           <form id="member-email-form" class="email-form">
             <label for="email-input">Member email</label>
             <input id="email-input" type="email" name="email" placeholder="name@example.com" autocomplete="email" required />
             <div class="form-actions">
-              <button type="submit" data-action="checkin" class="primary-btn">Check In</button>
-              <button type="submit" data-action="resend" class="ghost-btn">Resend My QR</button>
+              <button type="submit" class="primary-btn">Email me my QR</button>
             </div>
           </form>
           <div id="email-result" class="form-status" role="status" aria-live="polite"></div>
@@ -58,7 +60,6 @@
       </main>
 
       <footer class="kiosk-footer">
-        <span>The Atlas Gym • 23282 Del Lago Dr, Laguna Hills, CA 92653</span>
         <span>GymSense — Radical simplicity. Transparent affordability.</span>
       </footer>
     </div>

@@ -808,6 +808,72 @@ def create_app():
                 pass
             return jsonify({"ok": False, "error": str(e)}), 500
 
+
+@app.get("/api/kiosk/status")
+def api_kiosk_status():
+    try:
+        con = connect_db(); cur = con.cursor()
+        # Today total
+        if using_postgres():
+            cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+        else:
+            cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+        row = cur.fetchone() or {}
+        today_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+        # Last hour total
+        if using_postgres():
+            cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= NOW() - INTERVAL '1 hour'")
+        else:
+            cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= datetime('now','-1 hour')")
+        row = cur.fetchone() or {}
+        last_hour_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+        # Determine busyness bucket
+        count = int(last_hour_total or 0)
+        if count >= 25:
+            level = 'peak'
+            headline = 'Peak hour right now'
+            detail = f"{count} check-ins in the past 60 minutes."
+        elif count >= 12:
+            level = 'steady'
+            headline = 'Steady floor traffic'
+            detail = f"{count} check-ins this hour."
+        elif count > 0:
+            level = 'calm'
+            headline = 'Calm moment to check in'
+            detail = f"Only {count} check-ins this hour."
+        else:
+            level = 'calm'
+            headline = 'You are first to arrive'
+            detail = 'No check-ins logged in the past hour yet.'
+
+        messages = [
+            {"label": headline, "subtext": detail, "level": level},
+            {"label": "So far today", "subtext": f"{int(today_total or 0)} check-ins logged."}
+        ]
+
+        # Add a static promotional message to rotate
+        messages.append({"label": "Personal training", "subtext": "Ask the front desk about our 4-week starter pack."})
+
+        con.close()
+        return jsonify({
+            "ok": True,
+            "busyness": {
+                "level": level,
+                "label": headline,
+                "detail": detail,
+                "last_hour_total": count,
+                "today_total": int(today_total or 0),
+            },
+            "messages": messages,
+        })
+    except Exception as e:
+        try:
+            con.close()
+        except Exception:
+            pass
+        return jsonify({"ok": False, "error": str(e)}), 500
     @app.get("/admin/members")
     def admin_members_page():
         if not session.get("admin"):

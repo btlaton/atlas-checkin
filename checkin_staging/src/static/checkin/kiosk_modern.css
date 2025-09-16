@@ -19,9 +19,19 @@ body { margin: 0; font-family: "SF Pro Display", "Inter", system-ui, -apple-syst
 @media (min-width: 720px) {
   .kiosk-header { flex-direction: row; align-items: center; justify-content: space-between; }
 }
+@media (max-width: 719px) {
+  .status-stack { align-items: flex-start; min-width: auto; }
+  .status-rotator { text-align: left; }
+}
 .brand-block h1 { margin: 0; font-size: 32px; font-weight: 800; letter-spacing: 0.4px; }
 .brand-block p { margin: 4px 0 0; color: var(--muted); font-size: 16px; }
-.status-pill { align-self: flex-start; padding: 8px 16px; border-radius: 999px; background: var(--surface-alt); border: 1px solid var(--outline); font-size: 14px; color: var(--muted); }
+.status-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; min-width: 180px; flex-shrink: 0; }
+.status-rotator { display: flex; flex-direction: column; gap: 2px; text-align: right; min-height: 32px; opacity: 0.9; }
+.status-label { font-size: 14px; font-weight: 600; color: var(--text); }
+.status-sub { font-size: 13px; color: var(--muted); }
+.status-rotator[data-level="peak"] .status-label { color: #b91c1c; }
+.status-rotator[data-level="steady"] .status-label { color: #d97706; }
+.status-rotator[data-level="calm"] .status-label { color: #16a34a; }
 
 .kiosk-main { flex: 1; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; padding: 32px 24px 48px; max-width: 1100px; width: 100%; margin: 0 auto; }
 
@@ -29,7 +39,6 @@ body { margin: 0; font-family: "SF Pro Display", "Inter", system-ui, -apple-syst
 .card-head { display: flex; flex-direction: column; gap: 8px; }
 .card-head h2 { margin: 0; font-size: 24px; font-weight: 700; }
 .subhead { margin: 0; color: var(--muted); font-size: 15px; }
-.step { font-size: 13px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); }
 
 .scan-button { appearance: none; border: none; background: var(--accent); color: #ffffff; border-radius: 16px; padding: 20px; font-size: 20px; font-weight: 700; cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
 .scan-button:hover { transform: translateY(-2px); box-shadow: 0 18px 28px rgba(16,20,24,0.18); }
@@ -51,8 +60,8 @@ body { margin: 0; font-family: "SF Pro Display", "Inter", system-ui, -apple-syst
 .email-form input { padding: 14px 16px; font-size: 16px; border-radius: 14px; border: 1px solid var(--outline); background: var(--surface); color: var(--text); }
 .email-form input:focus { outline: 3px solid var(--focus); outline-offset: 2px; }
 
-.form-actions { display: flex; flex-wrap: wrap; gap: 12px; }
-.primary-btn, .ghost-btn { flex: 1 1 160px; padding: 14px 18px; font-size: 16px; font-weight: 700; border-radius: 14px; cursor: pointer; transition: transform 0.1s ease, box-shadow 0.1s ease; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-start; }
+.primary-btn, .ghost-btn { flex: 0 0 auto; padding: 14px 28px; font-size: 16px; font-weight: 700; border-radius: 14px; cursor: pointer; transition: transform 0.1s ease, box-shadow 0.1s ease; }
 .primary-btn { background: var(--accent); color: #ffffff; border: none; }
 .primary-btn:hover { transform: translateY(-1px); box-shadow: 0 12px 20px rgba(16,20,24,0.15); }
 .primary-btn:active { transform: translateY(0); box-shadow: none; }
@@ -62,7 +71,7 @@ body { margin: 0; font-family: "SF Pro Display", "Inter", system-ui, -apple-syst
 .form-status { min-height: 18px; font-size: 14px; color: var(--muted); }
 .card-hint { margin: 0; font-size: 14px; color: var(--muted); }
 
-.kiosk-footer { display: flex; flex-direction: column; gap: 6px; padding: 24px 32px 32px; font-size: 14px; color: var(--muted); text-align: center; border-top: 1px solid var(--outline); background: var(--surface); }
+.kiosk-footer { display: flex; justify-content: center; padding: 24px 32px 32px; font-size: 14px; color: var(--muted); text-align: center; border-top: 1px solid var(--outline); background: var(--surface); }
 @media (min-width: 720px) {
   .kiosk-footer { flex-direction: row; justify-content: space-between; text-align: left; }
 }
@@ -88,6 +97,5 @@ body { margin: 0; font-family: "SF Pro Display", "Inter", system-ui, -apple-syst
     --focus: rgba(245,246,249,0.18);
   }
   .ghost-btn { border-color: #2d3344; }
-  .status-pill { border-color: #2d3344; background: #1b1f29; }
   .preview-frame { background: #0f1115; border-color: #2d3344; }
 }

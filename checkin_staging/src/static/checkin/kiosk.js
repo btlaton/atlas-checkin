@@ -1,6 +1,63 @@
 /* Kiosk interactions: streamlined UI, front camera default, one-of field validation, success overlay */
 (function() {
   const emailResult = document.getElementById('email-result');
+  const statusRotator = document.getElementById('status-rotator');
+  const statusLabel = document.getElementById('status-label');
+  const statusSub = document.getElementById('status-sub');
+  if (statusRotator) statusRotator.dataset.level = '';
+  let statusMessages = [];
+  let statusIndex = 0;
+  let statusTimer = null;
+
+  function showStatusMessage(label, sub) {
+    if (statusLabel) statusLabel.textContent = label || '';
+    if (statusSub) statusSub.textContent = sub || '';
+  }
+
+  function startStatusRotation(messages) {
+    if (!messages || !messages.length) {
+      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+      return;
+    }
+    statusMessages = messages.slice();
+    statusIndex = 0;
+    showStatusMessage(statusMessages[0].label, statusMessages[0].subtext);
+    if (statusTimer) clearInterval(statusTimer);
+    if (statusMessages.length <= 1) {
+      statusTimer = null;
+      return;
+    }
+    statusTimer = setInterval(() => {
+      if (!statusMessages.length) return;
+      statusIndex = (statusIndex + 1) % statusMessages.length;
+      const msg = statusMessages[statusIndex];
+      showStatusMessage(msg.label, msg.subtext);
+    }, 10000);
+  }
+
+  async function loadStatus() {
+    try {
+      const r = await fetch('/api/kiosk/status');
+      const j = await r.json();
+      if (!j.ok) {
+          if (statusRotator) statusRotator.dataset.level = '';
+          showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+          return;
+      }
+      const messages = (j.messages || []).map(m => ({ label: m.label || '', subtext: m.subtext || '' }));
+      if (!messages.length && j.busyness) {
+        messages.push({ label: j.busyness.label || '', subtext: j.busyness.detail || '' });
+      }
+      if (statusRotator) {
+        statusRotator.dataset.level = (j.busyness && j.busyness.level) || '';
+      }
+      startStatusRotation(messages);
+    } catch (err) {
+      if (statusRotator) statusRotator.dataset.level = '';
+      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+    }
+  }
+
   const overlay = document.getElementById('success-overlay');
   const overlayText = document.getElementById('success-text');
   const aimHint = document.getElementById('aim-hint');
@@ -59,33 +116,17 @@
   const emailForm = document.getElementById('member-email-form');
   emailForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const submitter = e.submitter || document.activeElement;
-    const action = submitter?.dataset?.action;
     const data = Object.fromEntries(new FormData(emailForm).entries());
     const email = (data.email || '').trim();
     if (!email) { emailResult.textContent = 'Enter your email to continue.'; return; }
 
-    if (action === 'resend') {
-      const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
-      const j = await r.json();
-      if (j.ok) {
-        emailResult.textContent = 'Check your email for your QR code.';
-        emailForm.reset();
-      } else {
-        emailResult.textContent = j.error || 'Unable to send QR code.';
-      }
-      return;
-    }
-
-    // Default: attempt check-in via email lookup
-    const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
     const j = await r.json();
     if (j.ok) {
-      showSuccess(j.member_name || email);
+      emailResult.textContent = 'Check your email for your QR code.';
       emailForm.reset();
-      emailResult.textContent = '';
     } else {
-      emailResult.textContent = j.error || 'Check-in failed.';
+      emailResult.textContent = j.error || 'Unable to send QR code.';
     }
   });
 
@@ -100,7 +141,6 @@
 
   // QR scanning (front camera default)
   const scanWrap = document.getElementById('scan-wrap');
-  const scanSupport = document.getElementById('scan-support');
   const scanResult = document.getElementById('scan-result');
   const video = document.getElementById('preview');
   const canvas = document.getElementById('frame');
@@ -112,7 +152,6 @@
   const MAX_SAMPLE_W = 480;
 
   async function checkSupport() {
-    if (scanSupport) scanSupport.textContent = '';
     const supported = 'BarcodeDetector' in window;
     if (supported) {
       try {
@@ -129,11 +168,6 @@
       dbg.textContent = `BD:${bd} jsQR:${jq}`;
       dbg.classList.remove('hidden');
     }
-    if (scanSupport) {
-      if (detector || jsqrReady) {
-        scanSupport.textContent = detector ? 'Camera ready' : 'Camera ready (fallback)';
-      }
-    }
   }
 
   async function tryLoadJsQR() {
@@ -142,7 +176,7 @@
     await new Promise((resolve) => { const s1 = document.createElement('script'); s1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; s1.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s1.onerror = () => resolve(); document.head.appendChild(s1); });
     if (!jsqrReady) {
       await new Promise((resolve) => { const s2 = document.createElement('script'); s2.src = '/static/checkin/jsqr.min.js'; s2.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s2.onerror = () => resolve(); document.head.appendChild(s2); });
-      if (!jsqrReady) { scanSupport.textContent = 'Camera scanning not supported on this device. Use manual entry.'; scanBtn.disabled = true; }
+      if (!jsqrReady) { scanBtn.disabled = true; }
     }
   }
 
@@ -155,7 +189,6 @@
       }
       video.srcObject = mediaStream; await video.play();
       scanBtn.classList.add('hidden'); scanWrap.classList.remove('hidden');
-      if (scanSupport) scanSupport.textContent = 'Camera active';
       if (aimHint) {
         aimHint.classList.remove('hidden');
         // Auto-hide hint after a few seconds
@@ -170,7 +203,6 @@
     scanWrap.classList.add('hidden');
     scanBtn.classList.remove('hidden');
     if (aimHint) aimHint.classList.add('hidden');
-    if (scanSupport) scanSupport.textContent = 'Tap to scan again';
   }
 
   async function tick() {
@@ -224,6 +256,9 @@
     rafId = requestAnimationFrame(tick);
   }
 
+  showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+  loadStatus();
+  setInterval(loadStatus, 300000);
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
 

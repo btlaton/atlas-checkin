@@ -4,8 +4,8 @@ Use this list to track the final work needed before enabling the Atlas Check-In 
 
 ## 1. Functional Testing (Staging)
 - [ ] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
-- [ ] Manual email check-in, including duplicate-window handling
-- [ ] Manual name-only check-in flow (single match + fallback messaging)
+- [ ] Kiosk QR scan flow (camera + fallback) verified
+- [ ] Email-based QR resend flow (enter email, confirm message + delivery)
 - [ ] QR resend to email (verify SendGrid message in inbox/spam)
 - [ ] Admin PIN login, dashboard load, and recent check-in listing
 - [ ] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
