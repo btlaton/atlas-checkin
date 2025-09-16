@@ -10,9 +10,12 @@
   const nextBtn = document.getElementById('next');
   const detail = document.getElementById('detail');
   const detailContent = document.getElementById('detail-content');
+  const detailMeta = document.getElementById('detail-meta');
 
   let page = 1;
   const perPage = 25;
+  let total = 0;
+  let totalPages = 1;
 
   function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -27,8 +30,10 @@
     const j = await r.json();
     if (!j.ok) { rowsEl.innerHTML = `<tr><td colspan="6">${esc(j.error||'Failed to load')}</td></tr>`; return; }
     const list = j.items || [];
-    countEl.textContent = `${j.total||0} members`;
-    pageInfo.textContent = `Page ${j.page} of ${Math.max(1, Math.ceil((j.total||0)/j.per_page))}`;
+    total = j.total || 0;
+    totalPages = Math.max(1, Math.ceil(total / (j.per_page || perPage)));
+    countEl.textContent = `${total.toLocaleString()} members`;
+    pageInfo.textContent = `Page ${j.page} of ${totalPages}`;
     rowsEl.innerHTML = list.map(m => `
       <tr data-id="${m.id}">
         <td><a href="#" class="rowlink" data-id="${m.id}">${esc(m.name||'')}</a></td>
@@ -39,6 +44,8 @@
         <td>${esc(m.updated_at||'')}</td>
       </tr>
     `).join('');
+    prevBtn.disabled = (page <= 1);
+    nextBtn.disabled = (page >= totalPages);
   }
 
   rowsEl?.addEventListener('click', async (e)=>{
@@ -48,26 +55,33 @@
     const id = a.getAttribute('data-id');
     const r = await fetch(`/api/admin/members/${id}`);
     const j = await r.json();
-    if (!j.ok) { detail.style.display='block'; detailContent.textContent = j.error||'Failed to load detail'; return; }
+    if (!j.ok) {
+      detail.style.display='block';
+      detailMeta.textContent = '';
+      detailContent.textContent = j.error||'Failed to load detail';
+      return;
+    }
     const m = j.member;
     const cis = j.recent_checkins||[];
     detail.style.display = 'block';
+    detailMeta.textContent = m ? `${esc((m.status||'').toUpperCase())} • Tier: ${esc(m.tier||'None')}` : '';
     detailContent.innerHTML = `
-      <div><b>Name:</b> ${esc(m.name||'')}</div>
-      <div><b>Email:</b> ${esc(m.email_lower||'')}</div>
-      <div><b>Phone:</b> ${esc(m.phone_e164||'')}</div>
-      <div><b>Tier:</b> ${esc(m.tier||'')}</div>
-      <div><b>Status:</b> ${esc(m.status||'')}</div>
-      <div><b>Updated:</b> ${esc(m.updated_at||'')}</div>
-      <div style="margin-top:8px;"><b>Recent Check-Ins:</b></div>
-      <ul>${cis.map(ci=>`<li>${esc(ci.timestamp)} — ${esc(ci.method)}</li>`).join('')||'<li class="muted">None</li>'}</ul>
+      <div class="detail-grid">
+        <div><span class="label">Name</span><span>${esc(m.name||'')}</span></div>
+        <div><span class="label">Email</span><span>${esc(m.email_lower||'')}</span></div>
+        <div><span class="label">Phone</span><span>${esc(m.phone_e164||'')}</span></div>
+        <div><span class="label">Updated</span><span>${esc(m.updated_at||'')}</span></div>
+      </div>
+      <div class="detail-section">
+        <h3>Recent Check-ins</h3>
+        <ul class="detail-list">${cis.map(ci=>`<li>${esc(ci.timestamp)} • ${esc(ci.method)}</li>`).join('') || '<li class="muted">No recent activity</li>'}</ul>
+      </div>
     `;
   });
 
   applyBtn?.addEventListener('click', ()=>{ page=1; fetchPage(); });
   prevBtn?.addEventListener('click', ()=>{ if(page>1){page--; fetchPage();} });
-  nextBtn?.addEventListener('click', ()=>{ page++; fetchPage(); });
+  nextBtn?.addEventListener('click', ()=>{ if(page<totalPages){ page++; fetchPage(); } });
 
   fetchPage();
 })();
-

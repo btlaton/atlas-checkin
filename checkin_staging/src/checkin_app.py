@@ -494,12 +494,14 @@ def create_app():
 
     @app.get("/admin")
     def admin_dashboard():
-        require_admin()
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/admin"))
         return redirect(url_for("staff_dashboard"))
 
     @app.get("/staff")
     def staff_dashboard():
-        require_admin()
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/staff"))
         return render_template("checkin/staff_dashboard.html", datetime=datetime)
 
     # --- Staff-assisted Signup (MVP scaffold) ---
@@ -808,8 +810,9 @@ def create_app():
 
     @app.get("/admin/members")
     def admin_members_page():
-        require_admin()
-        return render_template("checkin/admin_members.html")
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/admin/members"))
+        return render_template("checkin/admin_members.html", datetime=datetime)
 
     def _query_members_list(q: str | None, tier: str | None, status: str | None, page: int, per_page: int):
         con = connect_db(); cur = con.cursor()
