@@ -112,7 +112,7 @@
   const MAX_SAMPLE_W = 480;
 
   async function checkSupport() {
-    scanSupport.textContent = '';
+    if (scanSupport) scanSupport.textContent = '';
     const supported = 'BarcodeDetector' in window;
     if (supported) {
       try {
@@ -128,6 +128,11 @@
       const jq = (typeof window.jsQR === 'function') ? 'yes' : 'no';
       dbg.textContent = `BD:${bd} jsQR:${jq}`;
       dbg.classList.remove('hidden');
+    }
+    if (scanSupport) {
+      if (detector || jsqrReady) {
+        scanSupport.textContent = detector ? 'Camera ready' : 'Camera ready (fallback)';
+      }
     }
   }
 
@@ -150,6 +155,7 @@
       }
       video.srcObject = mediaStream; await video.play();
       scanBtn.classList.add('hidden'); scanWrap.classList.remove('hidden');
+      if (scanSupport) scanSupport.textContent = 'Camera active';
       if (aimHint) {
         aimHint.classList.remove('hidden');
         // Auto-hide hint after a few seconds
@@ -158,7 +164,14 @@
       tick();
     } catch { scanResult.textContent = 'Unable to access camera'; }
   }
-  function stopScan() { if (rafId) cancelAnimationFrame(rafId); if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); scanWrap.classList.add('hidden'); scanBtn.classList.remove('hidden'); if (aimHint) aimHint.classList.add('hidden'); }
+  function stopScan() {
+    if (rafId) cancelAnimationFrame(rafId);
+    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+    scanWrap.classList.add('hidden');
+    scanBtn.classList.remove('hidden');
+    if (aimHint) aimHint.classList.add('hidden');
+    if (scanSupport) scanSupport.textContent = 'Tap to scan again';
+  }
 
   async function tick() {
     if (!video.videoWidth) { rafId = requestAnimationFrame(tick); return; }

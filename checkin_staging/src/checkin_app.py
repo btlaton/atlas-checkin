@@ -699,7 +699,7 @@ def create_app():
 
                     # Send QR email
                     send_email(customer_email, "Your Atlas Gym Check-In Code", (
-                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!"))
+                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nRadical simplicity. Transparent affordability."))
             return ("OK", 200)
         except Exception:
             return ("OK", 200)
@@ -1325,20 +1325,29 @@ def create_app():
             f"Hi {member['name']},\n\n"
             f"Here is your Atlas Gym check-in code. You can scan the QR below or open it in your browser.\n\n"
             f"Open link: {link}\n\n"
-            f"– Atlas Gym"
+            f"– Atlas Gym\n"
+            f"Radical simplicity. Transparent affordability."
         )
         body_html = f"""
-        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5;color:#eef2f7;background:#000;padding:20px'>
-          <div style='max-width:560px;margin:0 auto;background:#0a0a0a;border:1px solid #39FF14;border-radius:12px;padding:20px;box-shadow:0 0 20px rgba(57,255,20,0.2)'>
-            <h2 style='margin:0 0 12px;font-size:22px;letter-spacing:1px'>THE ATLAS GYM CHECK-IN</h2>
-            <p style='color:#c8c8c8;margin:0 0 8px'>Hi {member['name']},</p>
-            <p style='color:#c8c8c8;margin:0 0 12px'>Show this QR at the front desk kiosk to check in.</p>
-            <div style='text-align:center;margin:16px 0'>
-              <img src='cid:qrimg' width='280' height='280' alt='Your QR Code' style='background:#fff;border-radius:8px;border:2px solid #233152' />
+        <div style='margin:0;padding:32px 16px;background:#f5f5f5;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#101418;'>
+          <div style='max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;padding:32px;'>
+            <div style='display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:24px;'>
+              <div>
+                <div style='font-size:24px;font-weight:700;margin:0;'>The Atlas Gym</div>
+                <div style='margin-top:6px;color:#6b7280;font-size:14px;'>23282 Del Lago Dr, Laguna Hills, CA 92653</div>
+              </div>
+              <div style='text-align:right;font-size:12px;color:#9ca3af;text-transform:uppercase;letter-spacing:1.6px;line-height:1.4;'>Radical simplicity.<br/>Transparent affordability.</div>
             </div>
-            <p style='margin:14px 0'>
-              <a href='{link}' style='display:inline-block;background:#39FF14;color:#000;padding:12px 16px;border-radius:12px;text-decoration:none;font-weight:900;letter-spacing:0.4px'>Open My QR Code</a>
-            </p>
+            <h1 style='font-size:24px;margin:0 0 12px;'>Your check-in code</h1>
+            <p style='margin:0 0 24px;color:#374151;font-size:16px;'>Hi {member['name']}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
+            <div style='text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;'>
+              <img src='cid:qrimg' width='240' height='240' alt='Your Atlas Gym QR Code' style='display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;' />
+              <a href='{link}' style='display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700;font-size:16px;'>Open my QR code</a>
+            </div>
+            <p style='margin:0 0 12px;color:#6b7280;font-size:14px;'>Need help? Reply to this email or ask the front desk when you arrive.</p>
+            <hr style='border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;' />
+            <p style='margin:0;color:#9ca3af;font-size:12px;'>The Atlas Gym • 23282 Del Lago Dr, Laguna Hills, CA 92653</p>
+            <p style='margin:6px 0 0;color:#9ca3af;font-size:12px;'>GymSense — Radical simplicity. Transparent affordability.</p>
           </div>
         </div>
         """
