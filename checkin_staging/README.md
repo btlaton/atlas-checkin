@@ -20,12 +20,13 @@ This is a self‑contained bundle for deploying the Atlas Check‑In service. It
 
 ## Current Feature Set (Sep 2025)
 - Kiosk: Camera QR scanning (BarcodeDetector + jsQR fallback), manual check‑in, success overlay/chime.
-- Members: Resend QR (email or phone), member QR page with server‑generated PNG.
+- Members: Resend QR (email-only), member QR page with server-generated PNG.
 - Admin: PIN login, recent check‑ins, Members directory (search/filter/paginate, detail with recent visits).
 - Staff: Mobile dashboard at `/staff` (today KPIs, 7‑day trend, quick resend, recent check‑ins).
 - DB: Supabase Postgres with `members`, `check_ins`, optional `memberships`; adapters for Postgres/SQLite.
 - Email: SendGrid SMTP (via env). Staging verified end‑to‑end.
 - Health: `/healthz` endpoint.
+- Signup (staff-assisted scaffold, disabled unless `ENABLE_STAFF_SIGNUP=1`): `/staff/signup/login` (password gate), `/staff/signup` (form), Checkout Session creation, and Stripe webhook that upserts member + membership and sends QR email; success/cancel placeholders.
 
 ## Configuration (Render)
 Set per environment (staging/prod):
@@ -35,6 +36,7 @@ Set per environment (staging/prod):
   - `CHECKIN_SESSION_SECRET` — long random (unique per env)
   - `CHECKIN_DUP_WINDOW_MINUTES=5`
   - `ENABLE_INIT_PIN=1` — first run only; then remove and redeploy
+  - `ENABLE_STAFF_SIGNUP=0` — keep `0` on staging/production GA build; set to `1` on dedicated signup testing branches/envs
 
 - SMTP (SendGrid)
   - `SMTP_HOST=smtp.sendgrid.net`
@@ -88,3 +90,11 @@ Run order (staging → prod):
   - Admin actions: resend/activate/inactivate from directory.
   - Member polish: add quotes + “last visit” on kiosk success; add Reply‑To support address.
   - Wallet passes (Apple/Google) — Sprint 2.
+- Signup & Stripe (staging)
+  - `ENABLE_STAFF_SIGNUP=1` — required to expose `/staff/signup` routes in environments dedicated to signup testing
+  - `STAFF_SIGNUP_PASSWORD` — temporary password to unlock `/staff/signup`
+  - `STRIPE_API_KEY` — test secret key (sk_test_...)
+  - `STRIPE_WEBHOOK_SECRET` — test webhook signing secret (whsec_...)
+  - `STRIPE_PRICE_ESSENTIAL` / `STRIPE_PRICE_ELEVATED` / `STRIPE_PRICE_ELITE` — Price IDs (price_...)
+  - `JOIN_SUCCESS_URL` / `JOIN_CANCEL_URL` — e.g., `https://staging.gymsense.io/join/success` and `/join/cancel`
+  - Signup & Billing: staff auth via Supabase Auth, /staff/billing KPIs, Stripe Terminal/ACH options.

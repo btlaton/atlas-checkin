@@ -9,11 +9,7 @@ h1 { margin: 0 0 16px; font-size: 48px; line-height: 1.1; }
 .container-grid { max-width: 1024px; padding: 8px 12px; }
 .top-half { min-height: 60vh; }
 .bottom-half { min-height: 33vh; display: flex; align-items: stretch; margin-top: 0; }
-.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; }
-/* Keep two columns on iPad portrait (768px). Collapse to one column below 700px. */
-@media (max-width: 700px) {
-  .two-col { grid-template-columns: 1fr; }
-}
+.two-col { display: grid; grid-template-columns: 1fr; gap: 16px; width: 100%; }
 h1 { margin: 0 0 16px; font-size: 48px; line-height: 1.1; }
 .logo { text-align: center; margin-bottom: 8px; display:flex; align-items:center; justify-content:center; gap:12px; }
 .logo .fallback-title { font-family: 'AtlasStencil', "Stencil Std", "Gunplay", "Black Ops One", "Impact", "Arial Black", system-ui, sans-serif; font-weight: 900; letter-spacing: 1.2px; text-transform: uppercase; }
@@ -22,14 +18,17 @@ h1 { margin: 0 0 16px; font-size: 48px; line-height: 1.1; }
 .panel h2 { margin: 0 0 12px; font-size: 22px; letter-spacing: 0.3px; }
 .bottom-half .panel { padding: 12px; }
 .two-col .row { margin-bottom: 8px; }
-.two-col input[type="text"],
 .two-col input[type="email"],
-.two-col input[type="tel"],
 .two-col button { font-size: 14px; padding: 10px 12px; }
 .two-col label { font-size: 14px; }
+.two-col .single-col { max-width: 420px; margin: 0 auto; }
+.two-col .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
+.two-col .actions button { flex: 1 1 48%; min-width: 160px; }
+.two-col .actions .primary-btn,
+.two-col .actions .secondary-btn { width: auto; }
 .panel.subtle { background: transparent; border-style: dashed; }
 label { display: block; font-weight: 600; margin-bottom: 6px; }
-input[type="text"], input[type="email"], input[type="tel"], input[type="password"], input[type="file"] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); font-size: 16px; }
+input[type="text"], input[type="email"], input[type="password"], input[type="file"] { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid #333; background: #0a0a0a; color: var(--fg); font-size: 16px; }
 button { appearance: none; background: var(--accent); color: #000; border: 1px solid #333; padding: 12px 16px; font-weight: 800; border-radius: 10px; cursor: pointer; font-size: 16px; }
 .primary-btn { width: 100%; padding: 16px 18px; font-size: 18px; }
 .row { margin-bottom: 12px; }
@@ -51,7 +50,7 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
 #frame { display:none; }
 .hidden { display:none; }
 .scan-controls { display:flex; justify-content:center; margin: 8px 0 0; }
-.secondary-btn { background: transparent; color: var(--fg); border: 1px solid #333; padding: 8px 12px; border-radius: 8px; }
+.secondary-btn { background: transparent; color: var(--fg); border: 1px solid #333; padding: 12px 16px; border-radius: 10px; font-weight: 700; }
 
 /* Aim hint (arrow) */
 .aim-hint { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); opacity: 0.85; pointer-events: none; filter: drop-shadow(0 2px 2px rgba(0,0,0,0.6)); animation: aimPulse 1.6s ease-in-out infinite; }
@@ -101,10 +100,3 @@ button { appearance: none; background: var(--accent); color: #000; border: 1px s
   font-style: normal;
   font-display: swap;
 }
-
-/* Suggestions dropdown */
-.suggestions { margin-top: 4px; border: 1px solid #333; border-radius: 10px; background: #0a0a0a; overflow: hidden; box-shadow: 0 8px 16px rgba(0,0,0,0.35); }
-.suggestions.hidden { display: none; }
-.suggestions ul { list-style: none; margin: 0; padding: 4px 0; }
-.suggestions li { padding: 8px 12px; cursor: pointer; font-size: 14px; }
-.suggestions li:hover { background: #0f192d; }

@@ -36,40 +36,21 @@
 
       <section class="bottom-half">
         <div class="two-col">
-          <div class="col">
+          <div class="col single-col">
             <div class="panel">
-              <h2>Check-In (Manual)</h2>
-              <form id="checkin-form">
-                <input type="hidden" name="member_id" id="member_id" />
+              <h2>Check-In or Resend</h2>
+              <p class="muted">Enter the email on your membership.</p>
+              <form id="member-email-form">
                 <div class="row">
-                  <label>Name <span class="muted">(or enter Phone)</span></label>
-                  <input type="text" name="name" placeholder="Your full name" autocomplete="name" />
-                  <div id="name-suggestions" class="suggestions hidden" role="listbox" aria-label="Suggestions"></div>
+                  <label>Email</label>
+                  <input type="email" name="email" placeholder="name@example.com" autocomplete="email" required />
                 </div>
-                <div class="row">
-                  <label>Phone <span class="muted">(or enter Name)</span></label>
-                  <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
+                <div class="actions">
+                  <button type="submit" data-action="checkin" class="primary-btn">Check In</button>
+                  <button type="submit" data-action="resend" class="secondary-btn">Resend My QR Code</button>
                 </div>
-                <button type="submit">Check In</button>
               </form>
-              <div id="result" class="result" role="status" aria-live="polite"></div>
-            </div>
-          </div>
-          <div class="col">
-            <div class="panel">
-              <h2>Resend My QR Code</h2>
-              <form id="resend-form">
-                <div class="row">
-                  <label>Email <span class="muted">(or enter Phone)</span></label>
-                  <input type="email" name="email" placeholder="name@example.com" autocomplete="email" />
-                </div>
-                <div class="row">
-                  <label>Phone <span class="muted">(or enter Email)</span></label>
-                  <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
-                </div>
-                <button type="submit">Send My QR Code</button>
-                <div id="resend-result" class="result" role="status" aria-live="polite"></div>
-              </form>
+              <div id="email-result" class="result" role="status" aria-live="polite"></div>
             </div>
           </div>
         </div>

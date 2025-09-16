@@ -50,6 +50,7 @@ DB_PATH = get_db_path()
 DUP_WINDOW_MINUTES = int(os.environ.get("CHECKIN_DUP_WINDOW_MINUTES", "5"))
 SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me")
 STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
+STAFF_SIGNUP_ENABLED = os.environ.get("ENABLE_STAFF_SIGNUP", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def using_postgres() -> bool:
@@ -516,16 +517,22 @@ def create_app():
 
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
         if not session.get("staff_signup_auth"):
             return redirect(url_for("staff_signup_login"))
         return None
 
     @app.get("/staff/signup/login")
     def staff_signup_login():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
         return render_template("checkin/staff_signup_login.html")
 
     @app.post("/staff/signup/login")
     def staff_signup_login_post():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
         pw = request.form.get("password", "")
         if STAFF_SIGNUP_PASSWORD and pw == STAFF_SIGNUP_PASSWORD:
             session["staff_signup_auth"] = True
@@ -549,6 +556,8 @@ def create_app():
     @app.post("/api/signup/checkout_session")
     def api_signup_checkout_session():
         # Minimal validation; Stripe integration optional if not configured
+        if not STAFF_SIGNUP_ENABLED:
+            return jsonify({"ok": False, "error": "Signup disabled"}), 404
         redir = require_staff_signup_auth()
         if redir:
             return jsonify({"ok": False, "error": "Unauthorized"}), 401
@@ -593,6 +602,8 @@ def create_app():
     @app.post("/webhooks/stripe")
     def stripe_webhook():
         # Verify signature and handle key subscription events
+        if not STAFF_SIGNUP_ENABLED:
+            return ("OK", 200)
         payload = request.get_data()
         sig = request.headers.get("Stripe-Signature", "")
         secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
@@ -707,10 +718,14 @@ def create_app():
     # --- Signup success/cancel placeholders ---
     @app.get("/join/success")
     def join_success():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
         return render_template("checkin/join_success.html")
 
     @app.get("/join/cancel")
     def join_cancel():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
         return render_template("checkin/join_cancel.html")
 
     @app.get("/api/staff/metrics")
@@ -1283,30 +1298,20 @@ def create_app():
 
     @app.post("/api/qr/resend")
     def api_qr_resend():
-        # Accept email and/or phone; use whichever is provided
+        # Email-only kiosk resend to reduce input friction and enforce clean roster data
         payload = request.get_json(silent=True) or {}
         email_in = (payload.get("email") or request.form.get("email") or "").strip()
-        phone_in = (payload.get("phone") or request.form.get("phone") or "").strip()
         email_n = normalize_email(email_in) if email_in else None
-        phone_n = normalize_phone(phone_in) if phone_in else None
-        if not email_n and not phone_n:
-            return jsonify({"ok": False, "error": "Email or phone required"}), 400
+        if not email_n:
+            return jsonify({"ok": False, "error": "Email required"}), 400
 
         con = connect_db()
         cur = con.cursor()
-        member = None
-        if email_n:
-            cur.execute(
-                ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
-                (email_n,),
-            )
-            member = cur.fetchone()
-        if not member and phone_n:
-            cur.execute(
-                ("SELECT * FROM members WHERE phone_e164 = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE phone_e164 = ? AND status='active'"),
-                (phone_n,),
-            )
-            member = cur.fetchone()
+        cur.execute(
+            ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
+            (email_n,),
+        )
+        member = cur.fetchone()
         con.close()
 
         if not member:

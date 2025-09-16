@@ -1,6 +1,8 @@
 # Member Sign‑Up & Billing (Staff‑Assisted MVP)
 
-Scope: Staff‑assisted onboarding in‑gym on the iPad (no self‑service yet). Uses Stripe Checkout for subscriptions; no card data handled by us. On success, create/update the member + active membership in Supabase and send the QR email.
+Scope: Staff-assisted onboarding in-gym on the iPad (no self-service yet). Uses Stripe Checkout for subscriptions; no card data handled by us. On success, create/update the member + active membership in Supabase and send the QR email.
+
+> **Feature Flag** — All signup/billing routes are gated behind `ENABLE_STAFF_SIGNUP=1`. Leave the flag at `0` for GA-focused builds and enable it only in dedicated signup testing environments.
 
 ## Goals (MVP)
 - Staff flow only: `/staff/signup` (mobile‑friendly) behind staff auth (separate from kiosk PIN).
@@ -29,6 +31,13 @@ Scope: Staff‑assisted onboarding in‑gym on the iPad (no self‑service yet).
 See migration: `seed/migrations/20250914__signup_billing.sql`.
 
 ## API & Routes (planned)
+- Status (Sep 2025 — staging): Scaffold implemented.
+  - Staff password gate is live (env `STAFF_SIGNUP_PASSWORD`).
+  - Staff signup form is live at `/staff/signup` (after `/staff/signup/login`).
+  - Checkout Session creation is live: `POST /api/signup/checkout_session`.
+  - Webhook endpoint is live: `POST /webhooks/stripe` — writes member + membership and sends QR on `checkout.session.completed`.
+  - Success/cancel placeholders are live: `/join/success` and `/join/cancel` (configure via `JOIN_SUCCESS_URL`, `JOIN_CANCEL_URL`).
+
 - UI
   - `GET /staff/signup` — form: member info + tier; creates Checkout session.
   - `GET /join/success` / `GET /join/cancel` — landing pages used by Stripe success/cancel.
@@ -46,6 +55,7 @@ See migration: `seed/migrations/20250914__signup_billing.sql`.
   - `STRIPE_PRICE_ESSENTIAL`, `STRIPE_PRICE_ELEVATED`, `STRIPE_PRICE_ELITE`
   - `JOIN_SUCCESS_URL=https://staging.gymsense.io/join/success`
   - `JOIN_CANCEL_URL=https://staging.gymsense.io/join/cancel`
+  - `STAFF_SIGNUP_PASSWORD=<temporary password for /staff/signup>`
 
 ## Staff Authentication (for payment flows)
 - MVP option A (recommended): Supabase Auth (email/pass or magic links) for staff users; roles in a small `staff_users` table. Low lift, good path to multi‑tenant and lower ops.
@@ -71,6 +81,19 @@ Why Supabase Auth
 3) Add staff auth (Supabase Auth) to replace PIN for `/staff/signup`.
 4) Terminal (optional) and Wallet passes (next sprint).
 
+## Current Status & Next Steps (Parked)
+- Implemented in staging:
+  - `/staff/signup/login` (password gate via `STAFF_SIGNUP_PASSWORD`)
+  - `/staff/signup` (form), `/api/signup/checkout_session` (Stripe Checkout), `/webhooks/stripe` (upsert + QR email)
+  - `/join/success`, `/join/cancel` placeholders
+- Paused items:
+  - Staff auth via Supabase Auth (replace password gate)
+  - Staff billing dashboard (/staff/billing) with KPIs and action queue
+  - HTML welcome email template (currently plain text) and Reply‑To support
+  - Stripe Terminal (in‑person first charge), ACH option
+  - Wallet passes (Apple/Google)
+
+
 ## Open Questions
 - Stripe: do we want simple monthly only, or annual options? (MVP: monthly only.)
 - Refund/Cancel policy text (display during checkout; email template copy).
@@ -79,4 +102,3 @@ Why Supabase Auth
 ## References
 - Migrations: `seed/migrations/20250914__signup_billing.sql`
 - Current DB helpers/views: `seed/supabase_schema_only.sql`
-

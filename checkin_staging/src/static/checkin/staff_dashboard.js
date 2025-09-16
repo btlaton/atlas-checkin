@@ -41,10 +41,11 @@
   }
 
   qaSend?.addEventListener('click', async ()=>{
-    qaResult.textContent = 'Sending…';
     const v = qaContact.value.trim();
-    let body = {};
-    if (v.includes('@')) body.email = v; else body.phone = v;
+    if (!v) { qaResult.textContent = 'Enter an email first.'; return; }
+    if (!v.includes('@')) { qaResult.textContent = 'Use the member email on file.'; return; }
+    qaResult.textContent = 'Sending…';
+    const body = { email: v };
     try {
       const r = await fetch('/api/qr/resend', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const j = await r.json();
@@ -54,4 +55,3 @@
 
   load();
 })();
-
