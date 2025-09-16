@@ -3,60 +3,76 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Staff Dashboard</title>
-    <link rel="stylesheet" href="/static/checkin/style.css" />
-    <style>
-      .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
-      .card { background:#0a0a0a; border:1px solid #333; border-radius:12px; padding:12px; }
-      .kpi { font-size:28px; font-weight:800; }
-      .spark { width:100%; height:56px; }
-      .list li { padding:6px 0; border-bottom:1px solid #1d2740; }
-      .row { display:flex; gap:8px; align-items: flex-end; }
-    </style>
+    <title>GymSense Staff Console</title>
+    <link rel="stylesheet" href="/static/checkin/staff.css" />
   </head>
-  <body>
-    <div class="container small">
-      <header class="admin-header">
-        <h1>Staff</h1>
-        <nav>
-          <a href="/admin" style="margin-right:12px;">Admin</a>
-          <a href="/admin/logout">Logout</a>
+  <body class="staff-body">
+    <div class="staff-shell">
+      <header class="staff-header">
+        <div class="brand">
+          <div class="brand-title">GymSense</div>
+          <p class="brand-tagline">Delightfully streamlined check-ins. Transparent pricing. Zero hidden fees.</p>
+        </div>
+        <nav class="staff-nav">
+          <a href="/admin/members" class="nav-link">Members Directory</a>
+          <a href="/admin/logout" class="nav-link">Sign out</a>
         </nav>
       </header>
 
-      <section class="panel">
-        <h2>Today</h2>
-        <div class="cards">
-          <div class="card"><div class="muted">Check-Ins</div><div id="kpi-total" class="kpi">—</div></div>
-          <div class="card"><div class="muted">Unique Members</div><div id="kpi-unique" class="kpi">—</div></div>
-          <div class="card" style="grid-column:1/-1;">
-            <div class="muted">7-Day Trend</div>
-            <svg id="spark" class="spark" viewBox="0 0 200 56" preserveAspectRatio="none"></svg>
-          </div>
-        </div>
-      </section>
+      <main class="staff-main">
+        <section class="panel kpi-grid">
+          <article class="kpi-card">
+            <h2>Today</h2>
+            <p id="metric-today" class="kpi-value">—</p>
+            <span class="kpi-label">Check-ins</span>
+          </article>
+          <article class="kpi-card">
+            <h2>Last 60 Minutes</h2>
+            <p id="metric-hour" class="kpi-value">—</p>
+            <span class="kpi-label">Recent activity</span>
+          </article>
+          <article class="kpi-card">
+            <h2>Members Today</h2>
+            <p id="metric-members" class="kpi-value">—</p>
+            <span class="kpi-label">Unique members checked in</span>
+          </article>
+        </section>
 
-      <section class="panel">
-        <h2>Quick Actions</h2>
-        <div class="row">
-          <div style="flex:1;">
-            <label>Resend QR (email)</label>
+        <section class="panel trend-panel">
+          <div class="panel-header">
+            <h2>Check-ins • Last 7 Days</h2>
+            <span id="trend-caption" class="muted"></span>
+          </div>
+          <div id="trend-bars" class="trend-bars" aria-live="polite"></div>
+        </section>
+
+        <section class="panel action-panel">
+          <h2>Resend QR Code</h2>
+          <p class="muted">Email the member their QR instantly. Use the email on file.</p>
+          <div class="action-row">
             <input id="qa-contact" type="email" placeholder="name@example.com" autocomplete="email" />
+            <button id="qa-send" class="primary-btn">Send QR Email</button>
           </div>
-          <button id="qa-send">Send</button>
-        </div>
-        <div id="qa-result" class="result"></div>
-        <div style="margin-top:8px;">
-          <a href="/admin/members">Open Members Directory</a>
-        </div>
-      </section>
+          <div id="qa-result" class="result" role="status" aria-live="polite"></div>
+          <div class="action-links">
+            <a href="/admin/members" class="link">Open full members directory →</a>
+          </div>
+        </section>
 
-      <section class="panel">
-        <h2>Recent Check-Ins</h2>
-        <ul id="recent" class="list" style="list-style:none; margin:0; padding:0;"></ul>
-      </section>
+        <section class="panel recent-panel">
+          <div class="panel-header">
+            <h2>Recent Check-ins</h2>
+            <span class="muted">Most recent 10 check-ins</span>
+          </div>
+          <ul id="recent" class="recent-list" aria-live="polite"></ul>
+        </section>
+      </main>
+
+      <footer class="staff-footer">
+        <span>© {{ datetime.utcnow().year }} GymSense — Built for gyms that value clarity over hidden fees.</span>
+      </footer>
     </div>
 
-    <script src="/static/checkin/staff_dashboard.js"></script>
+    <script src="/static/checkin/staff_dashboard.js" defer></script>
   </body>
-  </html>
+</html>

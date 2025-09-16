@@ -495,25 +495,12 @@ def create_app():
     @app.get("/admin")
     def admin_dashboard():
         require_admin()
-        con = connect_db()
-        cur = con.cursor()
-        cur.execute(
-            """
-            SELECT ci.id, ci.timestamp, ci.method, m.name AS member_name
-            FROM check_ins ci
-            JOIN members m ON m.id = ci.member_id
-            ORDER BY ci.timestamp DESC
-            LIMIT 25
-            """
-        )
-        rows = cur.fetchall()
-        con.close()
-        return render_template("checkin/admin_dashboard.html", checkins=rows)
+        return redirect(url_for("staff_dashboard"))
 
     @app.get("/staff")
     def staff_dashboard():
         require_admin()
-        return render_template("checkin/staff_dashboard.html")
+        return render_template("checkin/staff_dashboard.html", datetime=datetime)
 
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
@@ -741,6 +728,14 @@ def create_app():
             row = cur.fetchone() or {}
             today_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
 
+            # Last hour total
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= NOW() - INTERVAL '1 hour'")
+            else:
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= datetime('now','-1 hour')")
+            row = cur.fetchone() or {}
+            last_hour_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
             if using_postgres():
                 cur.execute("SELECT COUNT(DISTINCT member_id) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
             else:
@@ -799,6 +794,7 @@ def create_app():
             return jsonify({
                 "ok": True,
                 "today_total": today_total,
+                "last_hour_total": last_hour_total,
                 "today_unique": today_unique,
                 "trend": trend,
                 "recent": recents,

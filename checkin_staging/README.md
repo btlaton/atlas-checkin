@@ -21,8 +21,8 @@ This is a self‑contained bundle for deploying the Atlas Check‑In service. It
 ## Current Feature Set (Sep 2025)
 - Kiosk: Camera QR scanning (BarcodeDetector + jsQR fallback), manual check‑in, success overlay/chime.
 - Members: Resend QR (email-only), member QR page with server-generated PNG.
-- Admin: PIN login, recent check‑ins, Members directory (search/filter/paginate, detail with recent visits).
-- Staff: Mobile dashboard at `/staff` (today KPIs, 7‑day trend, quick resend, recent check‑ins).
+- Admin: PIN login (redirects to staff console) and Members directory (search/filter/paginate, detail with recent visits).
+- Staff: Staff console at `/staff` (daily KPIs, last-hour pulse, 7-day bar trend, quick resend, recent check-ins, members directory link).
 - DB: Supabase Postgres with `members`, `check_ins`, optional `memberships`; adapters for Postgres/SQLite.
 - Email: SendGrid SMTP (via env). Staging verified end‑to‑end.
 - Health: `/healthz` endpoint.
