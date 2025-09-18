@@ -1425,16 +1425,8 @@ def create_app():
       </div>
       <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;" />
-      <style>
-        @font-face {
-          font-family: 'GymSenseScript';
-          font-style: normal;
-          font-weight: 700;
-          src: url('https://fonts.gstatic.com/s/oleoscript/v30/dg4m_pzhrqcFb2IzRNtEQw.woff2') format('woff2');
-        }
-      </style>
       <p style="margin:0;color:#9ca3af;font-size:12px;">
-        <span style="font-family:'GymSenseScript','Oleo Script','Brush Script MT','Lucida Handwriting',cursive;font-weight:700;color:#101418;">GymSense</span>
+        <span style="font-family:'Oleo Script','Brush Script MT','Lucida Handwriting',cursive;font-weight:700;color:#101418;">GymSense</span>
         &mdash; Radical simplicity. Transparent affordability.
       </p>
     </div>
