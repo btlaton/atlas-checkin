@@ -10,135 +10,112 @@
     <link rel="stylesheet" href="/static/checkin/style.css" />
     <style>
       body.qr-page {
-        background:#000;
-        color:#fff;
+        background:#f7f7f7;
+        color:#0f172a;
         min-height:100vh;
         margin:0;
         font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
         display:flex;
         align-items:center;
         justify-content:center;
-        padding:32px 18px;
+        padding:48px 18px;
       }
       .qr-shell {
         width:100%;
-        max-width:640px;
+        max-width:720px;
         display:flex;
         flex-direction:column;
-        gap:28px;
+        gap:32px;
       }
       .qr-card {
-        background:#0a0a0a;
-        border:1px solid #1d2740;
-        border-radius:24px;
-        padding:36px 32px;
-        box-shadow:0 18px 36px rgba(0,0,0,0.45);
+        background:#ffffff;
+        border:1px solid #e5e7eb;
+        border-radius:28px;
+        padding:48px 44px;
+        box-shadow:0 24px 48px rgba(15,23,42,0.08);
       }
       .qr-header {
+        text-align:center;
         display:flex;
         flex-direction:column;
-        gap:4px;
-        text-align:center;
+        gap:6px;
       }
       .qr-header .gym-name {
-        font-size:30px;
+        font-size:32px;
         font-weight:800;
-        letter-spacing:0.6px;
+        letter-spacing:0.75px;
         text-transform:uppercase;
+        color:#0f172a;
       }
       .qr-header .gym-address {
-        color:#9ca3af;
+        color:#64748b;
         font-size:14px;
-        letter-spacing:0.2px;
+        letter-spacing:0.25px;
       }
       .qr-card h1 {
-        font-size:36px;
+        font-size:38px;
         margin:0;
         letter-spacing:0.4px;
+        color:#0f172a;
       }
       .qr-card p.lead {
-        margin:12px 0 28px;
-        color:#cbd5f5;
-        font-size:17px;
-        line-height:1.5;
+        margin:14px 0 36px;
+        color:#334155;
+        font-size:18px;
+        line-height:1.6;
       }
       .qr-visual {
-        background:#050505;
-        border-radius:20px;
-        padding:24px;
-        border:1px solid #1f2937;
-        display:flex;
-        flex-direction:column;
-        align-items:center;
-        gap:18px;
-        margin-bottom:24px;
+        text-align:center;
+        margin-bottom:32px;
       }
       .qr-visual img {
-        width:260px;
-        height:260px;
-        border-radius:16px;
-        border:1px solid #27272a;
-        background:#fff;
-      }
-      .qr-token {
-        font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
-        background:#111827;
-        border:1px solid #1f2937;
-        border-radius:12px;
-        padding:12px 16px;
-        font-size:15px;
-        letter-spacing:0.4px;
-        color:#f8fafc;
-        width:100%;
-        text-align:center;
-        word-break:break-all;
+        width:280px;
+        height:280px;
+        border-radius:24px;
+        border:1px solid #e2e8f0;
+        box-shadow:0 12px 32px rgba(15,23,42,0.12);
       }
       .qr-actions {
         display:flex;
-        flex-wrap:wrap;
-        gap:12px;
         justify-content:center;
       }
       .qr-btn {
         appearance:none;
         border:none;
         border-radius:999px;
-        padding:13px 28px;
+        padding:16px 34px;
         font-weight:700;
-        letter-spacing:0.3px;
+        letter-spacing:0.35px;
         cursor:pointer;
-        transition:transform 0.18s ease, box-shadow 0.18s ease;
-      }
-      .qr-btn.primary {
-        background:#ffffff;
-        color:#000000;
-        box-shadow:0 8px 24px rgba(255,255,255,0.18);
-      }
-      .qr-btn.secondary {
-        background:transparent;
+        background:#0f172a;
         color:#ffffff;
-        border:1px solid #1f2937;
+        box-shadow:0 18px 32px rgba(15,23,42,0.18);
+        transition:transform 0.18s ease, box-shadow 0.18s ease;
+        text-decoration:none;
       }
-      .qr-btn:hover { transform:translateY(-1px); }
+      .qr-btn:hover {
+        transform:translateY(-1px);
+        box-shadow:0 20px 36px rgba(15,23,42,0.22);
+      }
       .qr-note {
-        color:#9ca3af;
+        color:#64748b;
         font-size:13px;
         text-align:center;
-        margin-top:18px;
-        line-height:1.4;
+        margin-top:24px;
+        line-height:1.5;
       }
       .qr-footer {
         text-align:center;
-        color:#6b7280;
+        color:#94a3b8;
         font-size:12px;
       }
       .qr-footer .brand-script {
-        font-family:'Oleo Script','Brush Script MT',cursive;
+        font-family:'Oleo Script','Brush Script MT','Lucida Handwriting',cursive;
         font-weight:700;
-        color:#f3f4f6;
+        color:#0f172a;
       }
       @media (max-width:520px) {
-        .qr-card { padding:28px 22px; }
+        .qr-card { padding:36px 26px; }
         .qr-card h1 { font-size:30px; }
         .qr-visual img { width:220px; height:220px; }
       }
@@ -155,28 +132,15 @@
         <p class="lead">Scan this code at the kiosk for a quick arrival. Keep it handy on your phone or download it for offline access.</p>
         <div class="qr-visual">
           <img id="qrImg" alt="Your Atlas Gym QR code" src="/api/qr.png?token={{ token }}" />
-          <div class="qr-token" id="token-box">{{ token }}</div>
         </div>
         <div class="qr-actions">
-          <a class="qr-btn primary" href="/api/qr.png?token={{ token }}" download="atlas-gym-qr.png">Download QR</a>
-          <button class="qr-btn secondary" id="copy" type="button">Copy code</button>
+          <a class="qr-btn" href="/api/qr.png?token={{ token }}" download="atlas-gym-qr.png">Download QR</a>
         </div>
-        <p class="qr-note">Add this page to your home screen or favorites so you're always ready to scan.</p>
+        <p class="qr-note">Tip: on iPhone or Android, tap and hold the QR to add it to your photo library for quick wallet access.</p>
       </main>
       <footer class="qr-footer">
         <span class="brand-script">GymSense</span> &mdash; Radical simplicity. Transparent affordability.
       </footer>
     </div>
-    <script>
-      document.getElementById('copy').addEventListener('click', async () => {
-        const txt = document.getElementById('token-box').textContent.trim();
-        try {
-          await navigator.clipboard.writeText(txt);
-          alert('QR code copied to clipboard.');
-        } catch (e) {
-          alert('Copy failed. Try manually selecting the code.');
-        }
-      });
-    </script>
   </body>
 </html>
