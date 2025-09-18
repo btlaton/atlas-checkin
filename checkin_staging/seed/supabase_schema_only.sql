@@ -49,7 +49,7 @@ end $$;
 
 -- URL-safe token generator for missing qr_token
 create or replace function public.gen_token_urlsafe(n_bytes int default 18) returns text
-language sql immutable as $$
+language sql volatile as $$
   select regexp_replace(translate(encode(gen_random_bytes(n_bytes),'base64'), '+/', '-_'), '=+$', '')
 $$;
 

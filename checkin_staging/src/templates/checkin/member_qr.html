@@ -3,27 +3,180 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Your Atlas Gym QR</title>
+    <title>Ready for Check-In | The Atlas Gym</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/static/checkin/style.css" />
+    <style>
+      body.qr-page {
+        background:#000;
+        color:#fff;
+        min-height:100vh;
+        margin:0;
+        font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:32px 18px;
+      }
+      .qr-shell {
+        width:100%;
+        max-width:640px;
+        display:flex;
+        flex-direction:column;
+        gap:28px;
+      }
+      .qr-card {
+        background:#0a0a0a;
+        border:1px solid #1d2740;
+        border-radius:24px;
+        padding:36px 32px;
+        box-shadow:0 18px 36px rgba(0,0,0,0.45);
+      }
+      .qr-header {
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        text-align:center;
+      }
+      .qr-header .gym-name {
+        font-size:30px;
+        font-weight:800;
+        letter-spacing:0.6px;
+        text-transform:uppercase;
+      }
+      .qr-header .gym-address {
+        color:#9ca3af;
+        font-size:14px;
+        letter-spacing:0.2px;
+      }
+      .qr-card h1 {
+        font-size:36px;
+        margin:0;
+        letter-spacing:0.4px;
+      }
+      .qr-card p.lead {
+        margin:12px 0 28px;
+        color:#cbd5f5;
+        font-size:17px;
+        line-height:1.5;
+      }
+      .qr-visual {
+        background:#050505;
+        border-radius:20px;
+        padding:24px;
+        border:1px solid #1f2937;
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        gap:18px;
+        margin-bottom:24px;
+      }
+      .qr-visual img {
+        width:260px;
+        height:260px;
+        border-radius:16px;
+        border:1px solid #27272a;
+        background:#fff;
+      }
+      .qr-token {
+        font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+        background:#111827;
+        border:1px solid #1f2937;
+        border-radius:12px;
+        padding:12px 16px;
+        font-size:15px;
+        letter-spacing:0.4px;
+        color:#f8fafc;
+        width:100%;
+        text-align:center;
+        word-break:break-all;
+      }
+      .qr-actions {
+        display:flex;
+        flex-wrap:wrap;
+        gap:12px;
+        justify-content:center;
+      }
+      .qr-btn {
+        appearance:none;
+        border:none;
+        border-radius:999px;
+        padding:13px 28px;
+        font-weight:700;
+        letter-spacing:0.3px;
+        cursor:pointer;
+        transition:transform 0.18s ease, box-shadow 0.18s ease;
+      }
+      .qr-btn.primary {
+        background:#ffffff;
+        color:#000000;
+        box-shadow:0 8px 24px rgba(255,255,255,0.18);
+      }
+      .qr-btn.secondary {
+        background:transparent;
+        color:#ffffff;
+        border:1px solid #1f2937;
+      }
+      .qr-btn:hover { transform:translateY(-1px); }
+      .qr-note {
+        color:#9ca3af;
+        font-size:13px;
+        text-align:center;
+        margin-top:18px;
+        line-height:1.4;
+      }
+      .qr-footer {
+        text-align:center;
+        color:#6b7280;
+        font-size:12px;
+      }
+      .qr-footer .brand-script {
+        font-family:'Oleo Script','Brush Script MT',cursive;
+        font-weight:700;
+        color:#f3f4f6;
+      }
+      @media (max-width:520px) {
+        .qr-card { padding:28px 22px; }
+        .qr-card h1 { font-size:30px; }
+        .qr-visual img { width:220px; height:220px; }
+      }
+    </style>
   </head>
-  <body>
-    <div class="container small">
-      <h1>Your Check-In Code</h1>
-      <p>Show this code at the front desk kiosk.</p>
-      <div class="token-box" id="token-box">{{ token }}</div>
-      <div style="margin:12px 0; text-align:center;">
-        <img id="qrImg" width="220" height="220" alt="Your QR code" src="/api/qr.png?token={{ token }}" />
-      </div>
-      <button id="copy">Copy</button>
-      <p class="muted">Tip: Add this page to your phone’s home screen or bookmarks.</p>
-      <p class="muted">Note: This QR is rendered locally if a library is present, otherwise via a public image service.</p>
+  <body class="qr-page">
+    <div class="qr-shell">
+      <header class="qr-header">
+        <div class="gym-name">The Atlas Gym</div>
+        <div class="gym-address">23282 Del Lago Dr, Laguna Hills, CA 92653</div>
+      </header>
+      <main class="qr-card">
+        <h1>Ready for check-in</h1>
+        <p class="lead">Scan this code at the kiosk for a quick arrival. Keep it handy on your phone or download it for offline access.</p>
+        <div class="qr-visual">
+          <img id="qrImg" alt="Your Atlas Gym QR code" src="/api/qr.png?token={{ token }}" />
+          <div class="qr-token" id="token-box">{{ token }}</div>
+        </div>
+        <div class="qr-actions">
+          <a class="qr-btn primary" href="/api/qr.png?token={{ token }}" download="atlas-gym-qr.png">Download QR</a>
+          <button class="qr-btn secondary" id="copy" type="button">Copy code</button>
+        </div>
+        <p class="qr-note">Add this page to your home screen or favorites so you're always ready to scan.</p>
+      </main>
+      <footer class="qr-footer">
+        <span class="brand-script">GymSense</span> &mdash; Radical simplicity. Transparent affordability.
+      </footer>
     </div>
     <script>
       document.getElementById('copy').addEventListener('click', async () => {
         const txt = document.getElementById('token-box').textContent.trim();
-        try { await navigator.clipboard.writeText(txt); alert('Copied!'); } catch (e) { alert('Copy failed'); }
+        try {
+          await navigator.clipboard.writeText(txt);
+          alert('QR code copied to clipboard.');
+        } catch (e) {
+          alert('Copy failed. Try manually selecting the code.');
+        }
       });
-      // QR is rendered server-side by /api/qr.png
     </script>
   </body>
-  </html>
+</html>

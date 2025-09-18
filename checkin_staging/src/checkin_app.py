@@ -9,6 +9,7 @@ import io
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, unquote
 import socket
@@ -393,7 +394,11 @@ def send_email(to_email: str, subject: str, body: str, body_html: str | None = N
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASS")
-    from_email = os.environ.get("SMTP_FROM", user or "noreply@example.com")
+    from_raw = os.environ.get("SMTP_FROM", user or "noreply@example.com")
+    from_name = os.environ.get("SMTP_FROM_NAME")
+    if not from_name and isinstance(from_raw, str) and from_raw.lower().endswith("@gymsense.io"):
+        from_name = "GymSense"
+    from_email = formataddr((from_name, from_raw)) if from_name else from_raw
     if not host or not user or not password:
         print(f"[DEV] Would send email to {to_email}: {subject}\n{body}")
         return True
@@ -1381,34 +1386,49 @@ def create_app():
         token = ensure_qr_token(member)
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
+        full_name = (member.get("name") if isinstance(member, dict) else member["name"]) or ""
+        full_name = full_name.strip()
+        first_name = full_name.split()[0] if full_name else "there"
+        preview_text = "Here's your Atlas Gym check-in QR code. Scan it at the kiosk for a breezy arrival."
         # Generate inline QR image
         qr_png = generate_qr_png(token, box_size=10, border=2)
         body = (
-            f"Hi {member['name']},\n\n"
-            f"Here is your Atlas Gym check-in code. You can scan the QR below or open it in your browser.\n\n"
+            f"Hi {first_name},\n\n"
+            f"Here is your Atlas Gym check-in QR. Scan it at the kiosk or open it on your phone using the link below.\n\n"
             f"Open link: {link}\n\n"
-            f"– Atlas Gym\n"
-            f"Radical simplicity. Transparent affordability."
+            f"- The Atlas Gym Team\n"
+            f"Powered by GymSense - Radical simplicity. Transparent affordability."
         )
         body_html = f"""
-        <div style='margin:0;padding:32px 16px;background:#f5f5f5;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#101418;'>
-          <style>@import url("https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap");</style>
-          <div style='max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;padding:32px;'>
-            <div style='margin-bottom:24px;'>
-              <div style='font-size:24px;font-weight:700;margin:0;'>The Atlas Gym</div>
-              <div style='margin-top:6px;color:#6b7280;font-size:14px;'>23282 Del Lago Dr, Laguna Hills, CA 92653</div>
-            </div>
-            <h1 style='font-size:24px;margin:0 0 12px;'>Your check-in code</h1>
-            <p style='margin:0 0 24px;color:#374151;font-size:16px;'>Hi {member['name']}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
-            <div style='text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;'>
-              <img src='cid:qrimg' width='240' height='240' alt='Your Atlas Gym QR Code' style='display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;' />
-              <a href='{link}' style='display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;'>Open my QR code</a>
-            </div>
-            <p style='margin:0 0 12px;color:#6b7280;font-size:14px;'>Need help? Reply to this email or ask the front desk when you arrive.</p>
-            <hr style='border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;' />
-            <p style='margin:0;color:#9ca3af;font-size:12px;'><span style="font-family:'Oleo Script','cursive';font-weight:700;color:#101418;">GymSense</span> — Radical simplicity. Transparent affordability.</p>
-          </div>
-        </div>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your Atlas Gym check-in code</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap" rel="stylesheet" />
+  </head>
+  <body style="margin:0;padding:32px 16px;background:#f5f5f5;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#101418;">
+    <div style="display:none;font-size:1px;color:#f5f5f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">{preview_text}</div>
+    <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;padding:32px;">
+      <div style="margin-bottom:24px;">
+        <div style="font-size:24px;font-weight:700;margin:0;">The Atlas Gym</div>
+        <div style="margin-top:6px;color:#6b7280;font-size:14px;">23282 Del Lago Dr, Laguna Hills, CA 92653</div>
+      </div>
+      <h1 style="font-size:24px;margin:0 0 12px;">Your check-in code</h1>
+      <p style="margin:0 0 24px;color:#374151;font-size:16px;">Hi {first_name}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
+      <div style="text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;">
+        <img src="cid:qrimg" width="240" height="240" alt="Your Atlas Gym QR Code" style="display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;" />
+        <a href="{link}" style="display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;">Open my QR code</a>
+      </div>
+      <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;" />
+      <p style="margin:0;color:#9ca3af;font-size:12px;"><span style="font-family:'Oleo Script','Brush Script MT',cursive;font-weight:700;color:#101418;">GymSense</span> &mdash; Radical simplicity. Transparent affordability.</p>
+    </div>
+  </body>
+</html>
         """
         inline = [("qr.png", qr_png, "image/png", "<qrimg>")] if qr_png else None
         ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html, inline_images=inline) if email_n else True
