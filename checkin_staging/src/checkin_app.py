@@ -1431,7 +1431,7 @@ def create_app():
         <img src="cid:qrimg" width="240" height="240" alt="Your Atlas Gym QR Code" style="display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;" />
         <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;">
           <a href="{link}" style="display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;">Open my QR code</a>
-          {f"<a href=\"{wallet_link}\" style=\"display:inline-block;background:#f1f5f9;color:#0f172a;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;border:1px solid #cbd5f5;\">Add to Apple Wallet</a>" if wallet_link else ""}
+          {'<a href="' + wallet_link + '" style="display:inline-block;background:#f1f5f9;color:#0f172a;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;border:1px solid #cbd5f5;">Add to Apple Wallet</a>' if wallet_link else ''}
         </div>
       </div>
       <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
