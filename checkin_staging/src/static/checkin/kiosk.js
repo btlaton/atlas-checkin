@@ -131,7 +131,7 @@
     const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
     const j = await r.json();
     if (j.ok) {
-      emailResult.textContent = 'Check your email for your QR code.';
+      emailResult.textContent = j.wallet ? 'Check your email for your QR + Apple Wallet pass.' : 'Check your email for your QR code.';
       emailForm.reset();
     } else {
       emailResult.textContent = j.error || 'Unable to send QR code.';

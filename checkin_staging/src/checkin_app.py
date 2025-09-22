@@ -34,7 +34,10 @@ from flask import (
     url_for,
     session,
     abort,
+    send_file,
 )
+
+from wallet_pass import wallet_pass_configured, build_member_wallet_pass
 
 
 def get_db_path() -> str:
@@ -52,6 +55,7 @@ DUP_WINDOW_MINUTES = int(os.environ.get("CHECKIN_DUP_WINDOW_MINUTES", "5"))
 SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me")
 STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
 STAFF_SIGNUP_ENABLED = os.environ.get("ENABLE_STAFF_SIGNUP", "0").strip().lower() in {"1", "true", "yes", "on"}
+WALLET_PASS_ENABLED = os.environ.get("ENABLE_WALLET_PASS", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def using_postgres() -> bool:
@@ -1386,6 +1390,9 @@ def create_app():
         token = ensure_qr_token(member)
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
+        wallet_available = WALLET_PASS_ENABLED and wallet_pass_configured()
+        wallet_link = f"{base_url}/member/pass.apple?token={token}" if wallet_available else None
+        wallet_text = f"Add to Apple Wallet: {wallet_link}\n\n" if wallet_link else ""
         full_name = (member.get("name") if isinstance(member, dict) else member["name"]) or ""
         full_name = full_name.strip()
         first_name = full_name.split()[0] if full_name else "there"
@@ -1395,7 +1402,8 @@ def create_app():
         body = (
             f"Hi {first_name},\n\n"
             f"Here is your Atlas Gym check-in QR. Scan it at the kiosk or open it on your phone using the link below.\n\n"
-            f"Open link: {link}\n\n"
+            f"Open link: {link}\n"
+            f"{wallet_text}"
             f"- The Atlas Gym Team\n"
             f"Powered by GymSense - Radical simplicity. Transparent affordability."
         )
@@ -1421,7 +1429,10 @@ def create_app():
       <p style="margin:0 0 24px;color:#374151;font-size:16px;">Hi {first_name}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
       <div style="text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;">
         <img src="cid:qrimg" width="240" height="240" alt="Your Atlas Gym QR Code" style="display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;" />
-        <a href="{link}" style="display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;">Open my QR code</a>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;">
+          <a href="{link}" style="display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;">Open my QR code</a>
+          {f"<a href=\"{wallet_link}\" style=\"display:inline-block;background:#f1f5f9;color:#0f172a;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;border:1px solid #cbd5f5;\">Add to Apple Wallet</a>" if wallet_link else ""}
+        </div>
       </div>
       <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
       <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;" />
@@ -1435,7 +1446,37 @@ def create_app():
         """
         inline = [("qr.png", qr_png, "image/png", "<qrimg>")] if qr_png else None
         ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html, inline_images=inline) if email_n else True
-        return jsonify({"ok": ok})
+        return jsonify({"ok": ok, "wallet": wallet_available})
+
+    @app.post("/api/pass/apple")
+    def api_pass_apple():
+        return jsonify({"ok": False, "error": "Use GET /member/pass.apple?token=..."}), 405
+
+    @app.get("/member/pass.apple")
+    def member_pass_apple():
+        if not WALLET_PASS_ENABLED or not wallet_pass_configured():
+            abort(404)
+        token = (request.args.get("token") or "").strip()
+        if not token:
+            return "Missing token", 400
+        member = _find_member_by_qr_token(token)
+        if not member:
+            abort(404)
+        try:
+            result = build_member_wallet_pass(member, token, request.url_root.rstrip("/"))
+        except Exception as exc:
+            print("Wallet pass generation failed:", exc)
+            return "Unable to generate pass", 500
+        bio = io.BytesIO(result.data)
+        bio.seek(0)
+        response = send_file(
+            bio,
+            mimetype=result.content_type,
+            as_attachment=True,
+            download_name=result.filename,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/member/qr")
     def member_qr_page():

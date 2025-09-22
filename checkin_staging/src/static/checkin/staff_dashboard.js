@@ -119,8 +119,12 @@
     try {
       const r = await fetch('/api/qr/resend', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: v }) });
       const j = await r.json();
-      qaResult.textContent = j.ok ? 'QR email sent.' : (j.error || 'Failed to send');
-      if (j.ok) qaContact.value = '';
+      if (j.ok) {
+        qaResult.textContent = j.wallet ? 'Email sent with QR + Apple Wallet pass.' : 'QR email sent.';
+        qaContact.value = '';
+      } else {
+        qaResult.textContent = j.error || 'Failed to send';
+      }
     } catch {
       qaResult.textContent = 'Failed to send';
     }
