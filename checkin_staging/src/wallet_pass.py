@@ -117,9 +117,9 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         "organizationName": org_name,
         "description": "Atlas Gym QR Check-In",
         "serialNumber": serial,
-        "logoText": "",
+        "logoText": "The Atlas Gym",
         "foregroundColor": "rgb(16,23,42)",
-        "backgroundColor": "rgb(242,244,247)",
+        "backgroundColor": "rgb(255,255,255)",
         "labelColor": "rgb(99,112,138)",
         "barcode": {
             "format": "PKBarcodeFormatQR",
@@ -137,15 +137,15 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         ],
         "eventTicket": {
             "primaryFields": [
-                {"key": "member", "label": "Member", "value": member_name}
+                {"key": "member", "label": "Member Name", "value": member_name}
             ],
             "secondaryFields": [
-                {"key": "tier", "label": "Membership", "value": member_tier or "Atlas Member"}
+                {"key": "tier", "label": "Membership", "value": member_tier or "Atlas Member"},
+                {"key": "action", "label": "Check-in", "value": "Ready"}
             ],
             "auxiliaryFields": [],
             "backFields": [
-                {"key": "email", "label": "Email", "value": email or "—"},
-                {"key": "link", "label": "Open QR Page", "value": qr_link}
+                {"key": "email", "label": "Email", "value": email or "—"}
             ]
         }
     }
@@ -159,8 +159,6 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         "icon@2x.png": _asset_bytes("icon@2x.png"),
         "logo.png": _asset_bytes("logo.png"),
         "logo@2x.png": _asset_bytes("logo@2x.png"),
-        "strip.png": _asset_bytes("strip.png"),
-        "strip@2x.png": _asset_bytes("strip@2x.png"),
     }
 
     manifest = {}
