@@ -1399,13 +1399,17 @@ def create_app():
         preview_text = "Here's your Atlas Gym check-in QR code. Scan it at the kiosk for a breezy arrival."
         # Generate inline QR image
         qr_png = generate_qr_png(token, box_size=10, border=2)
+        wallet_button_html = (
+            f"<a href=\"{wallet_link}\" style=\"display:inline-flex;align-items:center;justify-content:center;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:14px;font-weight:700;font-size:16px;letter-spacing:0.3px;\">Add to Apple Wallet</a>"
+            if wallet_link else ""
+        )
         body = (
             f"Hi {first_name},\n\n"
             f"Here is your Atlas Gym check-in QR. Scan it at the kiosk or open it on your phone using the link below.\n\n"
             f"Open link: {link}\n"
             f"{wallet_text}"
             f"- The Atlas Gym Team\n"
-            f"Powered by GymSense - Radical simplicity. Transparent affordability."
+            f"Radical simplicity. Transparent affordability."
         )
         body_html = f"""
 <!doctype html>
@@ -1429,17 +1433,13 @@ def create_app():
       <p style="margin:0 0 24px;color:#374151;font-size:16px;">Hi {first_name}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
       <div style="text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;">
         <img src="cid:qrimg" width="240" height="240" alt="Your Atlas Gym QR Code" style="display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;" />
-        <div style="display:flex;flex-wrap:wrap;gap:12px;justify-content:center;">
-          <a href="{link}" style="display:inline-block;background:#101418;color:#ffffff;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;">Open my QR code</a>
-          {'<a href="' + wallet_link + '" style="display:inline-block;background:#f1f5f9;color:#0f172a;text-decoration:none;padding:14px 32px;border-radius:999px;font-weight:700;font-size:16px;letter-spacing:0.3px;border:1px solid #cbd5f5;">Add to Apple Wallet</a>' if wallet_link else ''}
+        <div style="display:flex;flex-direction:column;gap:12px;align-items:center;">
+          {wallet_button_html}
+          <a href="{link}" style="display:inline-flex;align-items:center;justify-content:center;width:auto;background:#ffffff;color:#0f172a;text-decoration:none;padding:13px 26px;border-radius:14px;font-weight:600;font-size:15px;border:1px solid #cbd5f5;">Open my QR code</a>
         </div>
       </div>
       <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
-      <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 24px;" />
-      <p style="margin:0;color:#9ca3af;font-size:12px;">
-        <span style="font-family:'Oleo Script','Brush Script MT','Lucida Handwriting',cursive;font-weight:700;color:#101418;">GymSense</span>
-        &mdash; Radical simplicity. Transparent affordability.
-      </p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 0;" />
     </div>
   </body>
 </html>

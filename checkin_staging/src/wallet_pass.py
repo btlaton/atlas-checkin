@@ -96,8 +96,17 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
     team_id = os.environ[PASS_TEAM_ID_ENV]
     pass_type_id = os.environ[PASS_TYPE_ID_ENV]
 
-    member_name = (member.get("name") if isinstance(member, dict) else member["name"]) or "Member"
-    email = (member.get("email") if isinstance(member, dict) else member.get("email_lower")) or ""
+    def _get(field: str, default: str = ""):
+        if isinstance(member, dict):
+            return member.get(field, default)
+        try:
+            return member[field]
+        except Exception:
+            return default
+
+    member_name = (_get("name") or "Member").strip()
+    member_tier = (_get("membership_tier") or _get("membership_tier_normalized") or "Member").strip().title()
+    email = _get("email") or _get("email_lower") or ""
     serial = _member_serial(member, token)
     qr_link = f"{base_url}/member/qr?token={token}"
 
@@ -108,30 +117,32 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         "organizationName": org_name,
         "description": "Atlas Gym QR Check-In",
         "serialNumber": serial,
-        "relevanceScore": 0.5,
-        "logoText": "The Atlas Gym",
-        "foregroundColor": "rgb(15,23,42)",
-        "backgroundColor": "rgb(248,250,252)",
-        "labelColor": "rgb(100,116,139)",
+        "logoText": "",
+        "foregroundColor": "rgb(16,23,42)",
+        "backgroundColor": "rgb(242,244,247)",
+        "labelColor": "rgb(99,112,138)",
         "barcode": {
             "format": "PKBarcodeFormatQR",
             "message": token,
             "messageEncoding": "iso-8859-1",
-            "altText": "Scan at check-in"
+            "altText": "Show this QR at the Atlas Gym kiosk"
         },
         "locations": [
-            {"latitude": 33.618973, "longitude": -117.719061, "relevantText": "Welcome to The Atlas Gym"}
+            {
+                "latitude": 33.618973,
+                "longitude": -117.719061,
+                "relevantText": "You're near The Atlas Gym — tap to check in",
+                "maxDistance": 200
+            }
         ],
         "eventTicket": {
             "primaryFields": [
                 {"key": "member", "label": "Member", "value": member_name}
             ],
             "secondaryFields": [
-                {"key": "gym", "label": "Gym", "value": "The Atlas Gym"}
+                {"key": "tier", "label": "Membership", "value": member_tier or "Atlas Member"}
             ],
-            "auxiliaryFields": [
-                {"key": "qr", "label": "QR Code", "value": "Scan to check in"}
-            ],
+            "auxiliaryFields": [],
             "backFields": [
                 {"key": "email", "label": "Email", "value": email or "—"},
                 {"key": "link", "label": "Open QR Page", "value": qr_link}

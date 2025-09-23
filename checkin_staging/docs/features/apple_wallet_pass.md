@@ -22,6 +22,12 @@ Set the following when enabling the feature (base64 values are raw file contents
 - Public download endpoint: `GET /member/pass.apple?token=<qr_token>` (feature-flagged).
 - `POST /api/pass/apple` currently returns informative errors for API clients until extended.
 - Keep staging/prod disabled until manual QA with real devices is complete.
+- Geolocation nudges rely on the `locations` block (lat/lon + `maxDistance` + `relevantText`). iOS ultimately decides when to surface the pass; members must allow Wallet notifications/location and be within ~200 m.
+
+### Local validation
+
+- With the feature flag and certificates configured locally, download `/member/pass.apple?token=…` to grab a signed `.pkpass`, then AirDrop it (or drag into the iOS Simulator) for rapid styling checks.
+- Validate with Apple’s PassKit utilities or the Pass Type ID certificate assistant if you need deeper inspection logs.
 
 ### Encoding certificates for env vars
 
