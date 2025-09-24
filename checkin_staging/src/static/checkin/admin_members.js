@@ -28,7 +28,7 @@
     params.set('per_page', perPage);
     const r = await fetch(`/api/admin/members?${params.toString()}`);
     const j = await r.json();
-    if (!j.ok) { rowsEl.innerHTML = `<tr><td colspan="6">${esc(j.error||'Failed to load')}</td></tr>`; return; }
+    if (!j.ok) { rowsEl.innerHTML = `<tr><td colspan="5">${esc(j.error||'Failed to load')}</td></tr>`; return; }
     const list = j.items || [];
     total = j.total || 0;
     totalPages = Math.max(1, Math.ceil(total / (j.per_page || perPage)));
@@ -38,7 +38,6 @@
       <tr data-id="${m.id}">
         <td><a href="#" class="rowlink" data-id="${m.id}">${esc(m.name||'')}</a></td>
         <td>${esc(m.email_lower||'')}</td>
-        <td>${esc(m.phone_e164||'')}</td>
         <td>${esc(m.tier||'')}</td>
         <td>${esc(m.status||'')}</td>
         <td>${esc(m.updated_at||'')}</td>
