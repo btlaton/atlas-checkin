@@ -147,6 +147,12 @@ def init_db():
                 else:
                     cur.execute("INSERT INTO locations(id, name, timezone) VALUES (1, ?, ?)", ("Atlas Gym", "America/Los_Angeles"))
                 con.commit()
+            if using_postgres():
+                try:
+                    cur.execute("ALTER TABLE public.members ADD COLUMN IF NOT EXISTS membership_tier TEXT")
+                    con.commit()
+                except Exception:
+                    con.rollback()
         except Exception:
             # If schema/tables aren't there yet, ignore; migrations will create them.
             pass
