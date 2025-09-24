@@ -121,14 +121,11 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         "foregroundColor": "rgb(16,23,42)",
         "backgroundColor": "rgb(255,255,255)",
         "labelColor": "rgb(99,112,138)",
-        "headerFields": [
-            {"key": "passLabel", "label": "", "value": "QR Check-In"}
-        ],
         "barcode": {
             "format": "PKBarcodeFormatQR",
             "message": token,
             "messageEncoding": "iso-8859-1",
-            "altText": "Show this QR code at The Atlas Gym kiosk"
+            "altText": "Show this QR at The Atlas Gym kiosk"
         },
         "locations": [
             {
@@ -140,10 +137,11 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
         ],
         "eventTicket": {
             "primaryFields": [
-                {"key": "member", "label": "Member Name", "value": member_name},
+                {"key": "member", "label": "Member Name", "value": member_name}
+            ],
+            "secondaryFields": [
                 {"key": "tier", "label": "Membership Tier", "value": member_tier or "Atlas Member"}
             ],
-            "secondaryFields": [],
             "auxiliaryFields": [],
             "backFields": [
                 {"key": "email", "label": "Email", "value": email or "—"}
