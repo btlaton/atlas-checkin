@@ -708,7 +708,7 @@ def create_app():
 
                     # Send QR email
                     send_email(customer_email, "Your Atlas Gym Check-In Code", (
-                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nRadical simplicity. Transparent affordability."))
+                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nGymSense — Your gym operations, simplified."))
             return ("OK", 200)
         except Exception:
             return ("OK", 200)
@@ -857,7 +857,6 @@ def create_app():
             messages = [
                 {"label": headline, "subtext": detail, "level": level},
                 {"label": "So far today", "subtext": f"{int(today_total or 0)} check-ins logged."},
-                {"label": "Personal training", "subtext": "Ask the front desk about our 4-week starter pack."},
             ]
 
             con.close()
@@ -1409,7 +1408,7 @@ def create_app():
             f"Open link: {link}\n"
             f"{wallet_text}"
             f"- The Atlas Gym Team\n"
-            f"Radical simplicity. Transparent affordability."
+            f"GymSense — Your gym operations, simplified."
         )
         body_html = f"""
 <!doctype html>
