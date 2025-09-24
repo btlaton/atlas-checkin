@@ -29,17 +29,12 @@ ensure_tokens as (
   update public.members m
      set qr_token = public.gen_token_urlsafe(18)
    where m.qr_token is null
-  returning m.id
 )
-insert into public.memberships (member_id, provider, tier, status, start_date, last_seen_at)
-select m.id, 'mindbody', s.tier, 'active', current_date, now()
-from upsert_members m
-join seed s on s.external_id = m.external_id
-on conflict (member_id, provider) do update
-  set tier         = excluded.tier,
-      status       = 'active',
-      start_date   = coalesce(public.memberships.start_date, excluded.start_date),
-      last_seen_at = now();
+update public.members m
+set membership_tier = s.tier
+from upsert_members um
+join seed s on s.external_id = um.external_id
+where m.id = um.id;
 
 -- Verify
--- select * from public.active_gym_members order by name limit 10;
+-- select id, name, membership_tier from public.members order by name limit 10;

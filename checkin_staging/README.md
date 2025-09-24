@@ -23,10 +23,10 @@ This is a self‑contained bundle for deploying the Atlas Check‑In service. It
 - Members: Resend QR (email-only), member QR page with server-generated PNG.
 - Admin: PIN login (redirects to staff console) and Members directory (search/filter/paginate, detail with recent visits).
 - Staff: Staff console at `/staff` (daily KPIs, last-hour pulse, 7-day bar trend, quick resend, recent check-ins, members directory link).
-- DB: Supabase Postgres with `members`, `check_ins`, optional `memberships`; adapters for Postgres/SQLite.
+- DB: Supabase Postgres with `members` and `check_ins`; adapters for Postgres/SQLite.
 - Email: SendGrid SMTP (via env). Staging verified end‑to‑end.
 - Health: `/healthz` endpoint.
-- Signup (staff-assisted scaffold, disabled unless `ENABLE_STAFF_SIGNUP=1`): `/staff/signup/login` (password gate), `/staff/signup` (form), Checkout Session creation, and Stripe webhook that upserts member + membership and sends QR email; success/cancel placeholders.
+- Signup (staff-assisted scaffold, disabled unless `ENABLE_STAFF_SIGNUP=1`): `/staff/signup/login` (password gate), `/staff/signup` (form), Checkout Session creation, and Stripe webhook that upserts the member (including tier) and sends QR email; success/cancel placeholders.
 
 ## Configuration (Render)
 Set per environment (staging/prod):
@@ -51,10 +51,10 @@ Custom domains (Render → Custom Domains):
 
 ## Supabase Schema & Seed
 SQL files are under `seed/`:
-- `supabase_schema_only.sql` — memberships table, helpers (phone/token), view `active_gym_members`, indexes (incl. unique on `members.external_id`).
+- `supabase_schema_only.sql` — helpers (phone/token) and indexes (incl. unique on `members.external_id`).
 - `supabase_seed_minimal.sql` — seeds 3 test members (idempotent).
 - `supabase_seed_full.sql` — seeds 12 test members (idempotent).
-- `supabase_upsert_from_temp.sql` — upsert from a temp table populated from Mindbody CSV; refreshes active memberships.
+- `supabase_upsert_from_temp.sql` — upsert from a temp table populated from Mindbody CSV; normalizes tier and QR tokens.
 - `supabase_token_backfill_batch.sql` — backfills up to 500 missing QR tokens per run.
 
 Run order (staging → prod):

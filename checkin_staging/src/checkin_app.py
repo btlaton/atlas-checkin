@@ -641,7 +641,7 @@ def create_app():
                         price_id = li["price"].get("id")
                 subscription_id = sess_full.get("subscription") if isinstance(sess_full.get("subscription"), str) else (sess_full.get("subscription") or {}).get("id")
 
-                # Upsert member and membership
+                    # Upsert member record (tier stored on members table)
                 if customer_email:
                     email_n = normalize_email(customer_email)
                     name = customer_name or (cust.get("name") if cust else None) or "Member"
@@ -682,27 +682,6 @@ def create_app():
                             cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
                         else:
                             cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
-
-                    # Upsert membership (if table exists)
-                    try:
-                        if using_postgres():
-                            cur.execute("SELECT 1 FROM memberships WHERE member_id=%s LIMIT 1", (member_id,))
-                        else:
-                            cur.execute("SELECT 1 FROM memberships WHERE member_id=? LIMIT 1", (member_id,))
-                        exists = cur.fetchone() is not None
-                        if exists:
-                            if using_postgres():
-                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=%s, price_id=%s, status='active', last_seen_at=NOW() WHERE member_id=%s", (subscription_id, price_id, member_id))
-                            else:
-                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=?, price_id=?, status='active', last_seen_at=CURRENT_TIMESTAMP WHERE member_id=?", (subscription_id, price_id, member_id))
-                        else:
-                            if using_postgres():
-                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (%s,'stripe',%s,%s,'active',CURRENT_DATE, NOW())", (member_id, subscription_id, price_id))
-                            else:
-                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (?,?,?,?, 'active', date('now'), CURRENT_TIMESTAMP)", (member_id, 'stripe', subscription_id, price_id))
-                    except Exception:
-                        # memberships table may not exist; ignore gracefully
-                        pass
 
                     con.commit(); con.close()
 
@@ -900,10 +879,9 @@ def create_app():
         if status in ("active","inactive"):
             where.append("m.status = %s" if using_postgres() else "m.status = ?")
             params.append(status)
-        # Tier from memberships if available; else skip filter
-        tier_join = "LEFT JOIN memberships ms ON ms.member_id = m.id AND ms.status='active'"
+        tier_join = ""
         if tier in ("essential","elevated","elite"):
-            where.append("(ms.tier = %s)" if using_postgres() else "(ms.tier = ?)")
+            where.append("(m.membership_tier = %s)" if using_postgres() else "(m.membership_tier = ?)")
             params.append(tier)
         base = f"""
             FROM members m
@@ -921,7 +899,7 @@ def create_app():
             cur.execute(
                 f"""
                 SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, to_char(m.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
-                       ms.tier
+                       m.membership_tier
                 {base}
                 {order}
                 LIMIT %s OFFSET %s
@@ -932,7 +910,7 @@ def create_app():
             cur.execute(
                 f"""
                 SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, m.updated_at AS updated_at,
-                       ms.tier
+                       m.membership_tier
                 {base}
                 {order}
                 LIMIT ? OFFSET ?
@@ -945,7 +923,7 @@ def create_app():
                 items.append({
                     "id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
                     "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at"),
-                    "tier": r.get("tier"),
+                    "tier": r.get("membership_tier"),
                 })
             else:
                 items.append({
@@ -979,8 +957,8 @@ def create_app():
         # member row
         try:
             cur.execute(
-                ("SELECT id, name, email_lower, phone_e164, status, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
-                 "SELECT id, name, email_lower, phone_e164, status, updated_at FROM members WHERE id=?"),
+                ("SELECT id, name, email_lower, phone_e164, status, membership_tier, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
+                 "SELECT id, name, email_lower, phone_e164, status, membership_tier, updated_at FROM members WHERE id=?"),
                 (member_id,)
             )
             r = cur.fetchone()
@@ -988,21 +966,11 @@ def create_app():
                 con.close(); return jsonify({"ok": False, "error": "Not found"}), 404
             if using_postgres():
                 member = {"id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
-                          "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at")}
+                          "phone_e164": r.get("phone_e164"), "status": r.get("status"),
+                          "tier": r.get("membership_tier"), "updated_at": r.get("updated_at")}
             else:
-                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4], "updated_at": r[5]}
-            # tier via memberships if available
-            try:
-                cur.execute(
-                    ("SELECT tier FROM memberships WHERE member_id=%s AND status='active' LIMIT 1" if using_postgres() else
-                     "SELECT tier FROM memberships WHERE member_id=? AND status='active' LIMIT 1"),
-                    (member_id,)
-                )
-                tr = cur.fetchone()
-                if tr:
-                    member["tier"] = (tr.get("tier") if using_postgres() else tr[0])
-            except Exception:
-                member["tier"] = None
+                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4],
+                          "tier": r[5], "updated_at": r[6]}
             # recent check-ins
             cur.execute(
                 ("SELECT timestamp, method FROM check_ins WHERE member_id=%s ORDER BY timestamp DESC LIMIT 10" if using_postgres() else
