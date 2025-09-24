@@ -132,7 +132,7 @@ def build_member_wallet_pass(member, token: str, base_url: str) -> WalletPassRes
                 "latitude": 33.618973,
                 "longitude": -117.719061,
                 "relevantText": "You're near The Atlas Gym — tap to check in",
-                "maxDistance": 200
+                "maxDistance": 30
             }
         ],
         "eventTicket": {
