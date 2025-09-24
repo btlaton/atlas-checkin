@@ -895,9 +895,15 @@ def create_app():
             WHERE {' AND '.join(where)}
         """
         # total
-        cur.execute(("SELECT COUNT(*) "+base) if using_postgres() else ("SELECT COUNT(*) "+base), tuple(params))
+        count_sql = "SELECT COUNT(*) AS total_count " + base
+        cur.execute(count_sql, tuple(params))
         total_row = cur.fetchone()
-        total = total_row[0] if isinstance(total_row, (list, tuple)) else (total_row.get('count') if total_row else 0)
+        if isinstance(total_row, (list, tuple)):
+            total = total_row[0]
+        elif total_row:
+            total = total_row.get('total_count') or total_row.get('?column?') or 0
+        else:
+            total = 0
         # page
         offset = (page-1)*per_page
         order = "ORDER BY m.name ASC"
