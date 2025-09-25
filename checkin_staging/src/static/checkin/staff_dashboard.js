@@ -131,4 +131,6 @@
   });
 
   loadMetrics();
+  setInterval(loadMetrics, 60000);
+  window.addEventListener('gymsense:checkin', loadMetrics);
 })();
