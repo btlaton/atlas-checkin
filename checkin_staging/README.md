@@ -38,6 +38,11 @@ Set per environment (staging/prod):
   - `ENABLE_INIT_PIN=1` — first run only; then remove and redeploy
   - `ENABLE_STAFF_SIGNUP=0` — keep `0` on staging/production GA build; set to `1` on dedicated signup testing branches/envs
 
+- Core (required)
+  - `CHECKIN_SESSION_SECRET` — Flask session secret
+  - `DATABASE_URL` — Postgres connection string (Supabase)
+  - `CHECKIN_ALLOW_SQLITE=1` — optional for local SQLite testing; leave unset in staging/prod so the app fails fast when `DATABASE_URL` is missing.
+
 - SMTP (SendGrid)
   - `SMTP_HOST=smtp.sendgrid.net`
   - `SMTP_PORT=587`

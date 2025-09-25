@@ -16,6 +16,7 @@ import socket
 
 # Optional Postgres (Supabase) support via psycopg
 DATABASE_URL = os.environ.get("DATABASE_URL")
+ALLOW_SQLITE_FALLBACK = os.environ.get("CHECKIN_ALLOW_SQLITE", "0").strip().lower() in {"1", "true", "yes", "on"}
 _PG_AVAILABLE = False
 try:
     if DATABASE_URL:
@@ -59,7 +60,13 @@ WALLET_PASS_ENABLED = os.environ.get("ENABLE_WALLET_PASS", "0").strip().lower() 
 
 
 def using_postgres() -> bool:
-    return bool(DATABASE_URL)
+    if DATABASE_URL:
+        return True
+    if ALLOW_SQLITE_FALLBACK:
+        return False
+    raise RuntimeError(
+        "DATABASE_URL is not configured. Set CHECKIN_ALLOW_SQLITE=1 to allow the SQLite fallback in local development."
+    )
 
 
 def _connect_sqlite() -> sqlite3.Connection:
