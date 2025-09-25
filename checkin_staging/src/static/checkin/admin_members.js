@@ -16,8 +16,14 @@
   const perPage = 25;
   let total = 0;
   let totalPages = 1;
+  let searchTimer = null;
 
   function esc(s){ return (s==null?'':String(s)).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+  function scheduleFetch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { fetchPage(); }, 200);
+  }
 
   async function fetchPage() {
     const params = new URLSearchParams();
@@ -78,6 +84,7 @@
     `;
   });
 
+  qEl?.addEventListener('input', () => { page = 1; scheduleFetch(); });
   applyBtn?.addEventListener('click', ()=>{ page=1; fetchPage(); });
   prevBtn?.addEventListener('click', ()=>{ if(page>1){page--; fetchPage();} });
   nextBtn?.addEventListener('click', ()=>{ if(page<totalPages){ page++; fetchPage(); } });

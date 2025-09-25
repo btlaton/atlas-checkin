@@ -913,7 +913,10 @@ def create_app():
             total = 0
         # page
         offset = (page-1)*per_page
-        order = "ORDER BY m.name ASC"
+        if using_postgres():
+            order = "ORDER BY lower(regexp_replace(m.name, '^.*\\s+', '')) ASC, lower(m.name) ASC"
+        else:
+            order = "ORDER BY lower(CASE WHEN instr(trim(m.name), ' ') > 0 THEN substr(trim(m.name), instr(trim(m.name), ' ') + 1) ELSE trim(m.name) END) ASC, lower(m.name) ASC"
         if using_postgres():
             cur.execute(
                 f"""
