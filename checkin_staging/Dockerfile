@@ -12,7 +12,9 @@ RUN pip install --no-cache-dir \
     gunicorn==21.2.0 \
     qrcode[pil]==7.4.2 \
     Pillow==10.4.0 \
-    psycopg[binary]==3.2.1
+    psycopg[binary]==3.2.1 \
+    stripe==5.4.0 \
+    cryptography==42.0.5
 
 ENV PYTHONPATH=/app/src
 ENV PORT=5055

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Staff Signup Login</title>
+    <link rel="stylesheet" href="/static/checkin/style.css" />
+  </head>
+  <body>
+    <div class="container small">
+      <h1>Staff Signup</h1>
+      {% if error %}<div class="error">{{ error }}</div>{% endif %}
+      <form method="post">
+        <div class="row">
+          <label>Password</label>
+          <input type="password" name="password" placeholder="••••••" required />
+        </div>
+        <button type="submit">Unlock</button>
+      </form>
+      <p class="muted" style="margin-top:8px;">Configured via env: <code>STAFF_SIGNUP_PASSWORD</code>.</p>
+    </div>
+  </body>
+  </html>

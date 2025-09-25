@@ -1,0 +1,40 @@
+-- Minimal seed: insert 3 test members across tiers (idempotent)
+-- Run after supabase_schema_only.sql
+
+with seed as (
+  select * from (
+    values
+      ('TEST0001','Test One','test1@example.com','+1 555 000 0101','essential'),
+      ('TEST0002','Test Two','test2@example.com','+1 555 000 0102','elevated'),
+      ('TEST0003','Test Three','test3@example.com','+1 555 000 0103','elite')
+  ) as t(external_id,name_full,email_raw,phone_raw,tier)
+),
+upsert_members as (
+  insert into public.members (external_id, name, email_lower, phone_e164, status)
+  select s.external_id,
+         s.name_full,
+         lower(s.email_raw),
+         public.e164_us(s.phone_raw),
+         'active'
+  from seed s
+  on conflict (external_id) do update
+    set name        = excluded.name,
+        email_lower = excluded.email_lower,
+        phone_e164  = excluded.phone_e164,
+        status      = 'active',
+        updated_at  = now()
+  returning id, external_id
+),
+ensure_tokens as (
+  update public.members m
+     set qr_token = public.gen_token_urlsafe(18)
+   where m.qr_token is null
+)
+update public.members m
+set membership_tier = s.tier
+from upsert_members um
+join seed s on s.external_id = um.external_id
+where m.id = um.id;
+
+-- Verify
+-- select id, name, membership_tier from public.members order by name limit 10;

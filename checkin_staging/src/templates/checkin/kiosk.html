@@ -3,88 +3,74 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>THE ATLAS GYM CHECK-IN</title>
-    <meta name="theme-color" content="#000000">
+    <title>The Atlas Gym Check-In</title>
+    <meta name="theme-color" content="#ffffff">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <link rel="manifest" href="/static/manifest.webmanifest">
-    <link rel="stylesheet" href="/static/checkin/style.css" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap" />
+    <link rel="stylesheet" href="/static/checkin/kiosk_modern.css" />
   </head>
-  <body class="kiosk">
-    <div class="container container-grid">
-      <h1 class="logo" id="logo"><span class="fallback-title">THE ATLAS GYM CHECK-IN</span></h1>
-
-      <section class="top-half">
-        <div class="panel" id="scan-panel">
-          <h2>Scan Your Member QR Code</h2>
-          <div id="scan-support" class="muted"></div>
-          <div class="scan-cta">
-            <button id="scan-button" class="primary-btn bigcircle">Scan QR Code</button>
-          </div>
-          <div class="scan-wrap hidden" id="scan-wrap">
-            <video id="preview" playsinline muted></video>
-            <canvas id="frame" class="hidden" aria-hidden="true"></canvas>
-            <div id="aim-hint" class="aim-hint" aria-hidden="true">
-              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 3l5 7h-3v8h-4V10H7l5-7z" fill="#FFFFFF"/>
-              </svg>
-            </div>
-            <div id="scan-debug" class="scan-debug hidden" aria-hidden="true"></div>
-            <div id="scan-result" class="result" role="status" aria-live="polite"></div>
+  <body class="kiosk-body">
+    <div class="kiosk-shell">
+      <header class="kiosk-header" id="logo">
+        <div class="brand-block">
+          <h1>The Atlas Gym</h1>
+          <p>23282 Del Lago Dr, Laguna Hills, CA 92653</p>
+        </div>
+        <div class="status-stack">
+          <div class="status-rotator" id="status-rotator">
+            <span class="status-label" id="status-label"></span>
+            <span class="status-sub" id="status-sub"></span>
           </div>
         </div>
-      </section>
+      </header>
 
-      <section class="bottom-half">
-        <div class="two-col">
-          <div class="col">
-            <div class="panel">
-              <h2>Check-In (Manual)</h2>
-              <form id="checkin-form">
-                <input type="hidden" name="member_id" id="member_id" />
-                <div class="row">
-                  <label>Name <span class="muted">(or enter Phone)</span></label>
-                  <input type="text" name="name" placeholder="Your full name" autocomplete="name" />
-                  <div id="name-suggestions" class="suggestions hidden" role="listbox" aria-label="Suggestions"></div>
-                </div>
-                <div class="row">
-                  <label>Phone <span class="muted">(or enter Name)</span></label>
-                  <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
-                </div>
-                <button type="submit">Check In</button>
-              </form>
-              <div id="result" class="result" role="status" aria-live="polite"></div>
-            </div>
+      <main class="kiosk-main">
+        <section class="card scan-card" id="scan-panel">
+          <div class="scan-head">
+            <h2>Check-In with your QR code</h2>
+            <p class="subhead">Tap to start the camera, then hold your code in the frame.</p>
           </div>
-          <div class="col">
-            <div class="panel">
-              <h2>Resend My QR Code</h2>
-              <form id="resend-form">
-                <div class="row">
-                  <label>Email <span class="muted">(or enter Phone)</span></label>
-                  <input type="email" name="email" placeholder="name@example.com" autocomplete="email" />
-                </div>
-                <div class="row">
-                  <label>Phone <span class="muted">(or enter Email)</span></label>
-                  <input type="tel" name="phone" inputmode="tel" placeholder="(555) 555-5555" autocomplete="tel" />
-                </div>
-                <button type="submit">Send My QR Code</button>
-                <div id="resend-result" class="result" role="status" aria-live="polite"></div>
-              </form>
+          <button id="scan-button" class="scan-button scan-button-circle">Start scanning</button>
+          <div class="scan-preview hidden" id="scan-wrap">
+            <div class="preview-frame">
+              <video id="preview" playsinline muted></video>
+              <canvas id="frame" aria-hidden="true"></canvas>
+              <div id="aim-hint" class="aim-ring" aria-hidden="true"></div>
+              <div id="scan-debug" class="scan-debug hidden" aria-hidden="true"></div>
             </div>
+            <p id="scan-result" class="scan-status" role="status" aria-live="polite"></p>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <div id="success-overlay" class="overlay hidden" role="dialog" aria-live="assertive" aria-modal="true">
-        <div class="overlay-card">
-          <div class="overlay-check">✓</div>
-          <div id="success-text" class="overlay-text">Checked in. Enjoy your workout!</div>
-        </div>
-      </div>
+        <section class="card email-card">
+          <div class="card-head">
+            <h2>Need a fresh QR code?</h2>
+            <p class="subhead">Enter the email on your membership and we'll resend it instantly.</p>
+          </div>
+          <form id="member-email-form" class="email-form">
+            <label for="email-input">Member email</label>
+            <input id="email-input" type="email" name="email" placeholder="name@example.com" autocomplete="email" required />
+            <div class="form-actions">
+              <button type="submit" class="primary-btn">Email me my QR</button>
+            </div>
+          </form>
+          <div id="email-result" class="form-status" role="status" aria-live="polite"></div>
+        </section>
+      </main>
 
-      <p class="staff-hint" id="staff-hint">Staff: triple-tap the header to unlock admin</p>
+      <footer class="kiosk-footer">
+        <span><span class="footer-brand">GymSense</span> — Your gym operations, simplified.</span>
+      </footer>
     </div>
 
-    <script src="/static/checkin/kiosk.js"></script>
+    <div id="success-overlay" class="overlay hidden" role="dialog" aria-live="assertive" aria-modal="true">
+      <div class="overlay-card">
+        <div class="overlay-check">✓</div>
+        <div id="success-text" class="overlay-text">Checked in. Enjoy your workout!</div>
+      </div>
+    </div>
+
+    <script src="/static/checkin/kiosk.js" defer></script>
   </body>
   </html>

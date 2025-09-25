@@ -1,9 +1,73 @@
 /* Kiosk interactions: streamlined UI, front camera default, one-of field validation, success overlay */
 (function() {
-  const result = document.getElementById('result');
+  const emailResult = document.getElementById('email-result');
+  const statusRotator = document.getElementById('status-rotator');
+  const statusLabel = document.getElementById('status-label');
+  const statusSub = document.getElementById('status-sub');
+  if (statusRotator) statusRotator.dataset.level = '';
+  let statusMessages = [];
+  let statusIndex = 0;
+  let statusTimer = null;
+
+  function showStatusMessage(label, sub) {
+    if (statusLabel) statusLabel.textContent = label || '';
+    if (statusSub) statusSub.textContent = sub || '';
+  }
+
+  function applyStatusMessage(msg) {
+    if (!msg) {
+      showStatusMessage('Welcome to The Atlas Gym', 'Tap below to scan your QR code.');
+      if (statusRotator) statusRotator.dataset.level = '';
+      return;
+    }
+    showStatusMessage(msg.label || '', msg.subtext || '');
+    if (statusRotator) statusRotator.dataset.level = msg.level || '';
+  }
+
+  function startStatusRotation(messages) {
+    if (!messages || !messages.length) {
+      applyStatusMessage(null);
+      return;
+    }
+    statusMessages = messages.slice();
+    statusIndex = 0;
+    applyStatusMessage(statusMessages[0]);
+    if (statusTimer) clearInterval(statusTimer);
+    if (statusMessages.length <= 1) {
+      statusTimer = null;
+      return;
+    }
+    statusTimer = setInterval(() => {
+      if (!statusMessages.length) return;
+      statusIndex = (statusIndex + 1) % statusMessages.length;
+      applyStatusMessage(statusMessages[statusIndex]);
+    }, 10000);
+  }
+
+  async function loadStatus() {
+    try {
+      const r = await fetch('/api/kiosk/status');
+      const j = await r.json();
+      if (!j.ok) {
+          if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+          statusMessages = [];
+          applyStatusMessage(null);
+          return;
+      }
+      const messages = (j.messages || []).map(m => ({ label: m.label || '', subtext: m.subtext || '', level: m.level || '' }));
+      if (!messages.length && j.busyness) {
+        messages.push({ label: j.busyness.label || '', subtext: j.busyness.detail || '', level: j.busyness.level || '' });
+      }
+      startStatusRotation(messages);
+    } catch (err) {
+      if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
+      statusMessages = [];
+      applyStatusMessage(null);
+    }
+  }
+
   const overlay = document.getElementById('success-overlay');
   const overlayText = document.getElementById('success-text');
-  const memberIdInput = document.getElementById('member_id');
   const aimHint = document.getElementById('aim-hint');
   const scanBtn = document.getElementById('scan-button');
 
@@ -56,62 +120,21 @@
     setTimeout(() => overlay.classList.add('hidden'), 5000);
   }
 
-  // Manual check-in (phone preferred; name-only tries single match search)
-  const form = document.getElementById('checkin-form');
-  form?.addEventListener('submit', async (e) => {
+  // Email-driven check-in/resend actions
+  const emailForm = document.getElementById('member-email-form');
+  emailForm?.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const data = Object.fromEntries(new FormData(form).entries());
-    const name = (data.name || '').trim();
-    const phone = (data.phone || '').trim();
-    const member_id = (data.member_id || '').trim();
-    if (!name && !phone) { result.textContent = 'Enter phone or name to continue.'; return; }
-
-    if (member_id) {
-      // Direct check-in by selected member id
-      const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ member_id }) });
-      const j = await r.json();
-      if (j.ok) { showSuccess(j.member_name || 'Member'); form.reset(); memberIdInput.value=''; hideSuggestions(); } else { result.textContent = j.error || 'Check-in failed'; }
-      return;
-    }
-
-    if (phone) {
-      const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone }) });
-      const j = await r.json();
-      if (j.ok) { showSuccess(j.member_name || 'Member'); form.reset(); } else { result.textContent = j.error || 'Check-in failed'; }
-      return;
-    }
-
-    // Name-only: attempt a single match via search
-    try {
-      const r = await fetch(`/api/members/search?q=${encodeURIComponent(name)}`);
-      const list = await r.json();
-      if (!Array.isArray(list) || list.length === 0) { result.textContent = 'No member found. Please enter your phone.'; return; }
-      if (list.length > 1) { result.textContent = 'Multiple matches. Please enter your phone.'; return; }
-      const m = list[0];
-      if (!m.phone_e164) { result.textContent = 'Member found. Please enter your phone.'; return; }
-      const r2 = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: m.phone_e164 }) });
-      const j2 = await r2.json();
-      if (j2.ok) { showSuccess(j2.member_name || m.name || 'Member'); form.reset(); } else { result.textContent = j2.error || 'Check-in failed'; }
-    } catch { result.textContent = 'Unable to check in. Please try phone.'; }
-  });
-
-  // Resend QR (email or phone accepted)
-  const rform = document.getElementById('resend-form');
-  const rres = document.getElementById('resend-result');
-  rform?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(rform).entries());
+    const data = Object.fromEntries(new FormData(emailForm).entries());
     const email = (data.email || '').trim();
-    const phone = (data.phone || '').trim();
-    if (!email && !phone) { rres.textContent = 'Enter email or phone to continue.'; return; }
-    const payload = {}; if (email) payload.email = email; if (phone) payload.phone = phone;
-    const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!email) { emailResult.textContent = 'Enter your email to continue.'; return; }
+
+    const r = await fetch('/api/qr/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
     const j = await r.json();
     if (j.ok) {
-      rres.textContent = 'Check your inbox for your QR code.';
-      rform.reset();
+      emailResult.textContent = j.wallet ? 'Check your email for your QR + Apple Wallet pass.' : 'Check your email for your QR code.';
+      emailForm.reset();
     } else {
-      rres.textContent = j.error || 'Unable to send QR code';
+      emailResult.textContent = j.error || 'Unable to send QR code.';
     }
   });
 
@@ -126,7 +149,6 @@
 
   // QR scanning (front camera default)
   const scanWrap = document.getElementById('scan-wrap');
-  const scanSupport = document.getElementById('scan-support');
   const scanResult = document.getElementById('scan-result');
   const video = document.getElementById('preview');
   const canvas = document.getElementById('frame');
@@ -138,7 +160,6 @@
   const MAX_SAMPLE_W = 480;
 
   async function checkSupport() {
-    scanSupport.textContent = '';
     const supported = 'BarcodeDetector' in window;
     if (supported) {
       try {
@@ -163,7 +184,7 @@
     await new Promise((resolve) => { const s1 = document.createElement('script'); s1.src = 'https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js'; s1.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s1.onerror = () => resolve(); document.head.appendChild(s1); });
     if (!jsqrReady) {
       await new Promise((resolve) => { const s2 = document.createElement('script'); s2.src = '/static/checkin/jsqr.min.js'; s2.onload = () => { jsqrReady = (typeof window.jsQR === 'function'); resolve(); }; s2.onerror = () => resolve(); document.head.appendChild(s2); });
-      if (!jsqrReady) { scanSupport.textContent = 'Camera scanning not supported on this device. Use manual entry.'; scanBtn.disabled = true; }
+      if (!jsqrReady) { scanBtn.disabled = true; }
     }
   }
 
@@ -184,7 +205,13 @@
       tick();
     } catch { scanResult.textContent = 'Unable to access camera'; }
   }
-  function stopScan() { if (rafId) cancelAnimationFrame(rafId); if (mediaStream) mediaStream.getTracks().forEach(t => t.stop()); scanWrap.classList.add('hidden'); scanBtn.classList.remove('hidden'); if (aimHint) aimHint.classList.add('hidden'); }
+  function stopScan() {
+    if (rafId) cancelAnimationFrame(rafId);
+    if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+    scanWrap.classList.add('hidden');
+    scanBtn.classList.remove('hidden');
+    if (aimHint) aimHint.classList.add('hidden');
+  }
 
   async function tick() {
     if (!video.videoWidth) { rafId = requestAnimationFrame(tick); return; }
@@ -227,7 +254,13 @@
         if (aimHint) aimHint.classList.add('hidden');
         const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qr_token: raw }) });
         const j = await r.json();
-        if (j.ok) { showSuccess(j.member_name || 'Member'); } else { result.textContent = j.error || 'Check-in failed'; }
+        if (j.ok) {
+          showSuccess(j.member_name || 'Member');
+          loadStatus();
+          window.dispatchEvent(new CustomEvent('gymsense:checkin', { detail: { member: j.member_name || 'Member' } }));
+        } else {
+          emailResult.textContent = j.error || 'Check-in failed';
+        }
         return;
       }
       // Update debug dims while scanning
@@ -237,39 +270,11 @@
     rafId = requestAnimationFrame(tick);
   }
 
+  applyStatusMessage(null);
+  loadStatus();
+  setInterval(loadStatus, 300000);
   checkSupport();
   scanBtn?.addEventListener('click', startScan);
 
-  // Name suggestions (typeahead)
-  const nameInput = form?.querySelector('input[name="name"]');
-  const sugEl = document.getElementById('name-suggestions');
-  let nameDebounce;
-  function hideSuggestions(){ if (sugEl) { sugEl.classList.add('hidden'); sugEl.innerHTML=''; } }
-  async function fetchSuggestions(q){
-    if (!q || q.length < 2) { hideSuggestions(); return; }
-    try {
-      const r = await fetch(`/api/kiosk/suggest?q=${encodeURIComponent(q)}`);
-      const list = await r.json();
-      if (!Array.isArray(list) || list.length === 0) { hideSuggestions(); return; }
-      sugEl.innerHTML = `<ul>${list.map(m=>`<li data-id="${m.id}">${m.name}</li>`).join('')}</ul>`;
-      sugEl.classList.remove('hidden');
-    } catch { hideSuggestions(); }
-  }
-  nameInput?.addEventListener('input', () => {
-    memberIdInput.value = '';
-    clearTimeout(nameDebounce);
-    const q = nameInput.value.trim();
-    nameDebounce = setTimeout(()=>fetchSuggestions(q), 200);
-  });
-  sugEl?.addEventListener('click', (e)=>{
-    const li = e.target.closest('li');
-    if (!li) return;
-    const id = li.getAttribute('data-id');
-    const nm = li.textContent;
-    nameInput.value = nm;
-    memberIdInput.value = id;
-    hideSuggestions();
-    // Auto-submit for speed
-    form.requestSubmit();
-  });
+  // No additional suggestions or autocomplete to avoid accidental mismatches
 })();

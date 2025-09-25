@@ -1,0 +1,92 @@
+-- Supabase schema setup for Atlas Check-In (helpers + seed)
+-- Plus a small test seed to validate the app end-to-end
+--
+-- Run this in Supabase SQL Editor (staging first, then prod).
+
+-- 0) Enable crypto extension (for token generation)
+create extension if not exists pgcrypto;
+
+-- 1) Ensure updated_at auto-maintains on members
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+
+drop trigger if exists trg_members_updated_at on public.members;
+create trigger trg_members_updated_at
+before update on public.members
+for each row execute procedure public.set_updated_at();
+
+alter table public.members
+  add column if not exists membership_tier text;
+
+-- 2) Phone normalization helper (US-centric)
+create or replace function public.e164_us(phone text) returns text
+language plpgsql immutable as $$
+declare d text;
+begin
+  d := regexp_replace(coalesce(phone,''), '[^0-9]', '', 'g');
+  if length(d)=10 then return '+1'||d;
+  elsif length(d)=11 and left(d,1)='1' then return '+'||d;
+  elsif phone like '+%' then return phone;
+  else return nullif('+'||d, '+'); end if;
+end $$;
+
+-- 4) URL-safe token generator for missing qr_token
+create or replace function public.gen_token_urlsafe(n_bytes int default 18) returns text
+language sql volatile as $$
+  select regexp_replace(translate(encode(gen_random_bytes(n_bytes),'base64'), '+/', '-_'), '=+$', '')
+$$;
+
+-- 5) Helpful indexes for admin/kiosk
+create index if not exists idx_members_email on public.members(email_lower);
+create index if not exists idx_members_phone on public.members(phone_e164);
+create index if not exists idx_checkins_member_time on public.check_ins(member_id, timestamp);
+-- Unique key for upserts by external_id
+create unique index if not exists ux_members_external on public.members(external_id);
+
+-- 7) Seed test members across three tiers (idempotent)
+with seed as (
+  select
+    gs as i,
+    case when gs % 3 = 0 then 'essential'
+         when gs % 3 = 1 then 'elevated'
+         else 'elite' end               as tier,
+    ('Test User '||gs)                  as name_full,
+    lower('test'||gs||'@example.com')   as email_raw,
+    '+1'||lpad((5550000000 + gs)::text, 10, '0') as phone_raw,
+    ('TEST' || lpad(gs::text, 4, '0'))  as external_id
+  from generate_series(1,12) as gs
+),
+upsert_members as (
+  insert into public.members (external_id, name, email_lower, phone_e164, status)
+  select s.external_id,
+         s.name_full,
+         s.email_raw,
+         public.e164_us(s.phone_raw),
+         'active'
+  from seed s
+  on conflict (external_id) do update
+    set name        = excluded.name,
+        email_lower = excluded.email_lower,
+        phone_e164  = excluded.phone_e164,
+        status      = 'active',
+        updated_at  = now()
+  returning id, external_id
+),
+ensure_tokens as (
+  update public.members m
+     set qr_token = public.gen_token_urlsafe(18)
+   where m.qr_token is null
+)
+update public.members m
+set membership_tier = s.tier
+from upsert_members um
+join seed s on s.external_id = um.external_id
+where m.id = um.id;
+
+-- Verification samples (optional)
+-- select count(*) from public.members;
+-- select membership_tier, count(*) from public.members group by 1 order by 1;

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Member Sign-Up (Staff)</title>
+    <link rel="stylesheet" href="/static/checkin/style.css" />
+  </head>
+  <body>
+    <div class="container small">
+      <header class="admin-header">
+        <h1>Member Sign-Up</h1>
+        <nav>
+          <a href="/staff" style="margin-right:12px;">Staff</a>
+          <a href="/admin/logout">Logout</a>
+        </nav>
+      </header>
+
+      <section class="panel">
+        <h2>Member Info</h2>
+        <div class="row"><label>Name (required)</label><input id="name" type="text" placeholder="Full name" required></div>
+        <div class="row"><label>Email (required)</label><input id="email" type="email" placeholder="name@example.com" required></div>
+        <div class="row"><label>Phone (optional)</label><input id="phone" type="tel" placeholder="+1 555 000 0000"></div>
+        <div class="row"><label>Birthday (optional)</label><input id="birthday" type="date"></div>
+        <div class="row"><label>Address (optional)</label><input id="address" type="text" placeholder="123 Main St"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Membership Tier</h2>
+        <div class="row">
+          <select id="price">
+            {% for t in tiers %}
+              {% if t.id %}<option value="{{ t.id }}">{{ t.label }}</option>{% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <button id="start">Start Checkout</button>
+        <div id="result" class="result"></div>
+      </section>
+    </div>
+    <script src="/static/checkin/staff_signup.js"></script>
+  </body>
+  </html>

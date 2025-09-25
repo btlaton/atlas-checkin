@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GymSense Staff Console</title>
+    <link rel="stylesheet" href="/static/checkin/staff.css" />
+  </head>
+  <body class="staff-body">
+    <div class="staff-shell">
+      <header class="staff-header">
+        <div class="brand">
+          <div class="brand-title">The Atlas Gym</div>
+          <p class="brand-tagline">23282 Del Lago Dr, Laguna Hills, CA 92653</p>
+        </div>
+        <nav class="staff-nav">
+          <a href="/admin/members" class="nav-link">Members Directory</a>
+          <a href="/admin/logout" class="nav-link">Sign out</a>
+        </nav>
+      </header>
+
+      <main class="staff-main">
+        <section class="panel kpi-grid">
+          <article class="kpi-card">
+            <h2>Today</h2>
+            <p id="metric-today" class="kpi-value">—</p>
+            <span class="kpi-label">Check-ins</span>
+          </article>
+          <article class="kpi-card">
+            <h2>Last 60 Minutes</h2>
+            <p id="metric-hour" class="kpi-value">—</p>
+            <span class="kpi-label">Recent activity</span>
+          </article>
+          <article class="kpi-card">
+            <h2>Members Today</h2>
+            <p id="metric-members" class="kpi-value">—</p>
+            <span class="kpi-label">Unique members checked in</span>
+          </article>
+        </section>
+
+        <section class="panel trend-panel">
+          <div class="panel-header">
+            <h2>Check-ins • Last 7 Days</h2>
+            <span id="trend-caption" class="muted"></span>
+          </div>
+          <div id="trend-bars" class="trend-bars" aria-live="polite"></div>
+        </section>
+
+        <section class="panel action-panel">
+          <h2>Resend QR Code</h2>
+          <p class="muted">Email the member their QR instantly. Use the email on file.</p>
+          <div class="action-row">
+            <input id="qa-contact" type="email" placeholder="name@example.com" autocomplete="email" />
+            <button id="qa-send" class="primary-btn">Send QR Email</button>
+          </div>
+          <div id="qa-result" class="result" role="status" aria-live="polite"></div>
+          <div class="action-links">
+            <a href="/admin/members" class="link">Open full members directory →</a>
+          </div>
+        </section>
+
+        <section class="panel recent-panel">
+          <div class="panel-header">
+            <h2>Recent Check-ins</h2>
+            <span class="muted">Most recent 10 check-ins</span>
+          </div>
+          <ul id="recent" class="recent-list" aria-live="polite"></ul>
+        </section>
+      </main>
+
+      <footer class="staff-footer">
+        <span>© {{ datetime.utcnow().year }} GymSense — Your gym operations, simplified.</span>
+      </footer>
+    </div>
+
+    <script src="/static/checkin/staff_dashboard.js" defer></script>
+  </body>
+</html>

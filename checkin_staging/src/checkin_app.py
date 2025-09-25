@@ -9,12 +9,14 @@ import io
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse, unquote
 import socket
 
 # Optional Postgres (Supabase) support via psycopg
 DATABASE_URL = os.environ.get("DATABASE_URL")
+ALLOW_SQLITE_FALLBACK = os.environ.get("CHECKIN_ALLOW_SQLITE", "0").strip().lower() in {"1", "true", "yes", "on"}
 _PG_AVAILABLE = False
 try:
     if DATABASE_URL:
@@ -33,7 +35,10 @@ from flask import (
     url_for,
     session,
     abort,
+    send_file,
 )
+
+from wallet_pass import wallet_pass_configured, build_member_wallet_pass
 
 
 def get_db_path() -> str:
@@ -49,10 +54,19 @@ def get_db_path() -> str:
 DB_PATH = get_db_path()
 DUP_WINDOW_MINUTES = int(os.environ.get("CHECKIN_DUP_WINDOW_MINUTES", "5"))
 SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me")
+STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
+STAFF_SIGNUP_ENABLED = os.environ.get("ENABLE_STAFF_SIGNUP", "0").strip().lower() in {"1", "true", "yes", "on"}
+WALLET_PASS_ENABLED = os.environ.get("ENABLE_WALLET_PASS", "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def using_postgres() -> bool:
-    return bool(DATABASE_URL)
+    if DATABASE_URL:
+        return True
+    if ALLOW_SQLITE_FALLBACK:
+        return False
+    raise RuntimeError(
+        "DATABASE_URL is not configured. Set CHECKIN_ALLOW_SQLITE=1 to allow the SQLite fallback in local development."
+    )
 
 
 def _connect_sqlite() -> sqlite3.Connection:
@@ -140,6 +154,12 @@ def init_db():
                 else:
                     cur.execute("INSERT INTO locations(id, name, timezone) VALUES (1, ?, ?)", ("Atlas Gym", "America/Los_Angeles"))
                 con.commit()
+            if using_postgres():
+                try:
+                    cur.execute("ALTER TABLE public.members ADD COLUMN IF NOT EXISTS membership_tier TEXT")
+                    con.commit()
+                except Exception:
+                    con.rollback()
         except Exception:
             # If schema/tables aren't there yet, ignore; migrations will create them.
             pass
@@ -391,7 +411,11 @@ def send_email(to_email: str, subject: str, body: str, body_html: str | None = N
     port = int(os.environ.get("SMTP_PORT", "587"))
     user = os.environ.get("SMTP_USER")
     password = os.environ.get("SMTP_PASS")
-    from_email = os.environ.get("SMTP_FROM", user or "noreply@example.com")
+    from_raw = os.environ.get("SMTP_FROM", user or "noreply@example.com")
+    from_name = os.environ.get("SMTP_FROM_NAME")
+    if not from_name and isinstance(from_raw, str) and from_raw.lower().endswith("@gymsense.io"):
+        from_name = "GymSense"
+    from_email = formataddr((from_name, from_raw)) if from_name else from_raw
     if not host or not user or not password:
         print(f"[DEV] Would send email to {to_email}: {subject}\n{body}")
         return True
@@ -470,6 +494,9 @@ def create_app():
         pin = request.form.get("pin", "")
         if verify_pin(pin):
             session["admin"] = True
+            nxt = request.args.get("next") or ""
+            if isinstance(nxt, str) and nxt.startswith("/"):
+                return redirect(nxt)
             return redirect(url_for("admin_dashboard"))
         return render_template("checkin/admin_login.html", error="Invalid PIN")
 
@@ -482,23 +509,511 @@ def create_app():
         session.pop("admin", None)
         return redirect(url_for("admin_login"))
 
+    # Staff portal login shortcut (reuses /admin/login template/handler)
+    @app.get("/staff/login")
+    def staff_login():
+        return redirect(url_for("admin_login", next="/staff"))
+
     @app.get("/admin")
     def admin_dashboard():
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/admin"))
+        return redirect(url_for("staff_dashboard"))
+
+    @app.get("/staff")
+    def staff_dashboard():
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/staff"))
+        return render_template("checkin/staff_dashboard.html", datetime=datetime)
+
+    # --- Staff-assisted Signup (MVP scaffold) ---
+    def require_staff_signup_auth():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
+        if not session.get("staff_signup_auth"):
+            return redirect(url_for("staff_signup_login"))
+        return None
+
+    @app.get("/staff/signup/login")
+    def staff_signup_login():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
+        return render_template("checkin/staff_signup_login.html")
+
+    @app.post("/staff/signup/login")
+    def staff_signup_login_post():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
+        pw = request.form.get("password", "")
+        if STAFF_SIGNUP_PASSWORD and pw == STAFF_SIGNUP_PASSWORD:
+            session["staff_signup_auth"] = True
+            return redirect(url_for("staff_signup"))
+        err = "Incorrect password" if STAFF_SIGNUP_PASSWORD else "Not configured (set STAFF_SIGNUP_PASSWORD)"
+        return render_template("checkin/staff_signup_login.html", error=err)
+
+    @app.get("/staff/signup")
+    def staff_signup():
+        # separate from PIN; requires STAFF_SIGNUP_PASSWORD
+        redir = require_staff_signup_auth()
+        if redir:
+            return redir
+        tiers = [
+            {"id": os.environ.get("STRIPE_PRICE_ESSENTIAL"), "label": "Essential"},
+            {"id": os.environ.get("STRIPE_PRICE_ELEVATED"), "label": "Elevated"},
+            {"id": os.environ.get("STRIPE_PRICE_ELITE"), "label": "Elite"},
+        ]
+        return render_template("checkin/staff_signup.html", tiers=tiers)
+
+    @app.post("/api/signup/checkout_session")
+    def api_signup_checkout_session():
+        # Minimal validation; Stripe integration optional if not configured
+        if not STAFF_SIGNUP_ENABLED:
+            return jsonify({"ok": False, "error": "Signup disabled"}), 404
+        redir = require_staff_signup_auth()
+        if redir:
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        payload = request.get_json(silent=True) or {}
+        name = (payload.get("name") or "").strip()
+        email = (payload.get("email") or "").strip()
+        tier_price = (payload.get("price_id") or "").strip()
+        phone = (payload.get("phone") or "").strip()
+        birthday = (payload.get("birthday") or "").strip()
+        address = (payload.get("address") or "").strip()
+        if not name or not email or not tier_price:
+            return jsonify({"ok": False, "error": "Missing required fields"}), 400
+        api_key = os.environ.get("STRIPE_API_KEY")
+        success_url = os.environ.get("JOIN_SUCCESS_URL", request.url_root.rstrip("/") + "/join/success")
+        cancel_url = os.environ.get("JOIN_CANCEL_URL", request.url_root.rstrip("/") + "/join/cancel")
+        if not api_key:
+            return jsonify({"ok": False, "error": "Stripe not configured"}), 501
+        try:
+            import stripe
+            stripe.api_key = api_key
+            # Create or reuse Customer
+            customer = stripe.Customer.create(
+                name=name,
+                email=email,
+                phone=phone or None,
+                address={"line1": address} if address else None,
+                metadata={"birthday": birthday} if birthday else None,
+            )
+            session_obj = stripe.checkout.Session.create(
+                mode="subscription",
+                customer=customer.id,
+                line_items=[{"price": tier_price, "quantity": 1}],
+                success_url=success_url + "?session_id={CHECKOUT_SESSION_ID}",
+                cancel_url=cancel_url,
+                locale="en",
+                metadata={"app_member_email": email, "app_member_name": name},
+            )
+            return jsonify({"ok": True, "url": session_obj.url})
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Stripe error: {str(e)}"}), 500
+
+    @app.post("/webhooks/stripe")
+    def stripe_webhook():
+        # Verify signature and handle key subscription events
+        if not STAFF_SIGNUP_ENABLED:
+            return ("OK", 200)
+        payload = request.get_data()
+        sig = request.headers.get("Stripe-Signature", "")
+        secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+        try:
+            import stripe
+            if not secret:
+                # If not configured, acknowledge to avoid retries during scaffold
+                return ("OK", 200)
+            event = stripe.Webhook.construct_event(payload, sig, secret)
+        except Exception:
+            return ("Bad signature", 400)
+
+        try:
+            if event and event.get("type") == "checkout.session.completed":
+                sess = event["data"]["object"]
+                stripe.api_key = os.environ.get("STRIPE_API_KEY")
+                # Retrieve full session with line items
+                session_id = sess.get("id")
+                try:
+                    sess_full = stripe.checkout.Session.retrieve(session_id, expand=["line_items", "customer", "subscription"])
+                except Exception:
+                    sess_full = sess
+                cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
+                customer_id = (cust.get("id") if cust else sess_full.get("customer"))
+                customer_email = None
+                if sess_full.get("customer_details"):
+                    customer_email = sess_full["customer_details"].get("email")
+                if not customer_email:
+                    customer_email = sess_full.get("customer_email") or (sess_full.get("metadata") or {}).get("app_member_email")
+                customer_name = (sess_full.get("metadata") or {}).get("app_member_name")
+
+                # Extract price and subscription ids
+                price_id = None
+                if sess_full.get("line_items") and sess_full["line_items"].get("data"):
+                    li = sess_full["line_items"]["data"][0]
+                    if li.get("price"):
+                        price_id = li["price"].get("id")
+                subscription_id = sess_full.get("subscription") if isinstance(sess_full.get("subscription"), str) else (sess_full.get("subscription") or {}).get("id")
+
+                    # Upsert member record (tier stored on members table)
+                if customer_email:
+                    email_n = normalize_email(customer_email)
+                    name = customer_name or (cust.get("name") if cust else None) or "Member"
+                    phone = (cust.get("phone") if cust else None)
+                    con = connect_db(); cur = con.cursor()
+                    # Find existing member by email
+                    if using_postgres():
+                        cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
+                    else:
+                        cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
+                    row = cur.fetchone()
+                    if row:
+                        member_id = row[0] if isinstance(row, (list, tuple)) else (row.get("id") if isinstance(row, dict) else row[0])
+                        # Update basic fields + stripe_customer_id
+                        if using_postgres():
+                            cur.execute("UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (name, normalize_phone(phone), customer_id, member_id))
+                        else:
+                            cur.execute("UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (name, normalize_phone(phone), customer_id, member_id))
+                    else:
+                        # Insert new member
+                        if using_postgres():
+                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id", (name, email_n, normalize_phone(phone), customer_id))
+                            member_id = cur.fetchone()[0]
+                        else:
+                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)", (name, email_n, normalize_phone(phone), 'active', customer_id))
+                            member_id = cur.lastrowid
+
+                    # Ensure QR token
+                    if using_postgres():
+                        cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
+                    else:
+                        cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
+                    tokrow = cur.fetchone()
+                    token = (tokrow[0] if isinstance(tokrow, (list, tuple)) else (tokrow.get("qr_token") if tokrow else None)) if tokrow else None
+                    if not token:
+                        token = secrets.token_urlsafe(24)
+                        if using_postgres():
+                            cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
+                        else:
+                            cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+
+                    con.commit(); con.close()
+
+                    # Send QR email
+                    send_email(customer_email, "Your Atlas Gym Check-In Code", (
+                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nGymSense — Your gym operations, simplified."))
+            return ("OK", 200)
+        except Exception:
+            return ("OK", 200)
+
+    # --- Signup success/cancel placeholders ---
+    @app.get("/join/success")
+    def join_success():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
+        return render_template("checkin/join_success.html")
+
+    @app.get("/join/cancel")
+    def join_cancel():
+        if not STAFF_SIGNUP_ENABLED:
+            abort(404)
+        return render_template("checkin/join_cancel.html")
+
+    @app.get("/api/staff/metrics")
+    def api_staff_metrics():
         require_admin()
-        con = connect_db()
-        cur = con.cursor()
-        cur.execute(
-            """
-            SELECT ci.id, ci.timestamp, ci.method, m.name AS member_name
-            FROM check_ins ci
-            JOIN members m ON m.id = ci.member_id
-            ORDER BY ci.timestamp DESC
-            LIMIT 25
-            """
-        )
-        rows = cur.fetchall()
+        try:
+            con = connect_db(); cur = con.cursor()
+            # Today totals
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+            else:
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+            row = cur.fetchone() or {}
+            today_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+            # Last hour total
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= NOW() - INTERVAL '1 hour'")
+            else:
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= datetime('now','-1 hour')")
+            row = cur.fetchone() or {}
+            last_hour_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+            if using_postgres():
+                cur.execute("SELECT COUNT(DISTINCT member_id) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+            else:
+                cur.execute("SELECT COUNT(DISTINCT member_id) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+            row = cur.fetchone() or {}
+            today_unique = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+            # Recent check-ins (last 10)
+            cur.execute(
+                ("""
+                 SELECT ci.timestamp, ci.method, m.name
+                 FROM check_ins ci JOIN members m ON m.id = ci.member_id
+                 ORDER BY ci.timestamp DESC LIMIT 10
+                 """ if using_postgres() else
+                 """
+                 SELECT ci.timestamp, ci.method, m.name
+                 FROM check_ins ci JOIN members m ON m.id = ci.member_id
+                 ORDER BY ci.timestamp DESC LIMIT 10
+                 """
+                )
+            )
+            recents = []
+            for r in cur.fetchall():
+                if using_postgres():
+                    recents.append({"timestamp": str(r.get("timestamp")), "method": r.get("method"), "name": r.get("name")})
+                else:
+                    recents.append({"timestamp": r[0], "method": r[1], "name": r[2]})
+
+            # 7-day trend (fill missing days in Python)
+            if using_postgres():
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE - INTERVAL '6 days' GROUP BY d ORDER BY d ASC")
+                rows = cur.fetchall()
+                counts = {}
+                for r in rows:
+                    dval = (r.get('d') if not isinstance(r, (list, tuple)) else r[0])
+                    cval = (r.get('c') if not isinstance(r, (list, tuple)) else r[1])
+                    counts[str(dval)] = int(cval or 0)
+            else:
+                cur.execute("SELECT date(timestamp) AS d, COUNT(*) AS c FROM check_ins WHERE date(timestamp) >= date('now','-6 day') GROUP BY d ORDER BY d ASC")
+                rows = cur.fetchall()
+                counts = {}
+                for r in rows:
+                    # sqlite row supports key access
+                    dval = r['d'] if hasattr(r, '__getitem__') and 'd' in r.keys() else (r[0] if isinstance(r,(list,tuple)) else r[0])
+                    cval = r['c'] if hasattr(r, '__getitem__') and 'c' in r.keys() else (r[1] if isinstance(r,(list,tuple)) else r[1])
+                    counts[str(dval)] = int(cval or 0)
+            from datetime import date, timedelta
+            today = date.today()
+            trend = []
+            for i in range(6, -1, -1):
+                d = today - timedelta(days=i)
+                ds = d.isoformat()
+                trend.append({"date": ds, "count": int(counts.get(ds, 0) or 0)})
+
+            con.close()
+            return jsonify({
+                "ok": True,
+                "today_total": today_total,
+                "last_hour_total": last_hour_total,
+                "today_unique": today_unique,
+                "trend": trend,
+                "recent": recents,
+            })
+        except Exception as e:
+            try:
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/api/kiosk/status")
+    def api_kiosk_status():
+        try:
+            con = connect_db(); cur = con.cursor()
+
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= CURRENT_DATE AND timestamp < CURRENT_DATE + INTERVAL '1 day'")
+            else:
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE date(timestamp) = date('now')")
+            row = cur.fetchone() or {}
+            today_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+            if using_postgres():
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= NOW() - INTERVAL '1 hour'")
+            else:
+                cur.execute("SELECT COUNT(*) AS c FROM check_ins WHERE timestamp >= datetime('now','-1 hour')")
+            row = cur.fetchone() or {}
+            last_hour_total = (row[0] if isinstance(row, (list, tuple)) else row.get('c', 0))
+
+            count = int(last_hour_total or 0)
+            if count >= 25:
+                level = "peak"
+                headline = "Peak hour right now"
+                detail = f"{count} check-ins in the past 60 minutes."
+            elif count >= 12:
+                level = "steady"
+                headline = "Steady floor traffic"
+                detail = f"{count} check-ins this hour."
+            elif count > 0:
+                level = "calm"
+                headline = "Calm moment to check in"
+                detail = f"Only {count} check-ins this hour."
+            else:
+                level = "calm"
+                headline = "You are first to arrive"
+                detail = "No check-ins logged in the past hour yet."
+
+            messages = [
+                {"label": headline, "subtext": detail, "level": level},
+                {"label": "So far today", "subtext": f"{int(today_total or 0)} check-ins logged."},
+            ]
+
+            con.close()
+            return jsonify({
+                "ok": True,
+                "busyness": {
+                    "level": level,
+                    "label": headline,
+                    "detail": detail,
+                    "last_hour_total": count,
+                    "today_total": int(today_total or 0),
+                },
+                "messages": messages,
+            })
+        except Exception as e:
+            try:
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/admin/members")
+    def admin_members_page():
+        if not session.get("admin"):
+            return redirect(url_for("admin_login", next="/admin/members"))
+        return render_template("checkin/admin_members.html", datetime=datetime)
+
+    def _query_members_list(q: str | None, tier: str | None, status: str | None, page: int, per_page: int):
+        con = connect_db(); cur = con.cursor()
+        where = ["1=1"]
+        params = []
+        like = None
+        if q:
+            like = f"%{q}%"
+            if using_postgres():
+                where.append("(m.name ILIKE %s OR m.email_lower ILIKE %s OR m.phone_e164 ILIKE %s)")
+                params += [like, like, like]
+            else:
+                where.append("(m.name LIKE ? OR m.email_lower LIKE ? OR m.phone_e164 LIKE ?)")
+                params += [like, like, like]
+        if status in ("active","inactive"):
+            where.append("m.status = %s" if using_postgres() else "m.status = ?")
+            params.append(status)
+        tier_join = ""
+        if tier in ("essential","elevated","elite"):
+            where.append("(m.membership_tier = %s)" if using_postgres() else "(m.membership_tier = ?)")
+            params.append(tier)
+        base = f"""
+            FROM members m
+            {tier_join}
+            WHERE {' AND '.join(where)}
+        """
+        # total
+        count_sql = "SELECT COUNT(*) AS total_count " + base
+        cur.execute(count_sql, tuple(params))
+        total_row = cur.fetchone()
+        if isinstance(total_row, (list, tuple)):
+            total = total_row[0]
+        elif total_row:
+            total = total_row.get('total_count') or total_row.get('?column?') or 0
+        else:
+            total = 0
+        # page
+        offset = (page-1)*per_page
+        if using_postgres():
+            order = "ORDER BY lower(regexp_replace(m.name, '^.*\\s+', '')) ASC, lower(m.name) ASC"
+        else:
+            order = "ORDER BY lower(CASE WHEN instr(trim(m.name), ' ') > 0 THEN substr(trim(m.name), instr(trim(m.name), ' ') + 1) ELSE trim(m.name) END) ASC, lower(m.name) ASC"
+        if using_postgres():
+            cur.execute(
+                f"""
+                SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, to_char(m.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
+                       m.membership_tier
+                {base}
+                {order}
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params + [per_page, offset])
+            )
+        else:
+            cur.execute(
+                f"""
+                SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, m.updated_at AS updated_at,
+                       m.membership_tier
+                {base}
+                {order}
+                LIMIT ? OFFSET ?
+                """,
+                tuple(params + [per_page, offset])
+            )
+        items = []
+        for r in cur.fetchall():
+            if using_postgres():
+                items.append({
+                    "id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
+                    "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at"),
+                    "tier": r.get("membership_tier"),
+                })
+            else:
+                items.append({
+                    "id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4],
+                    "updated_at": r[5], "tier": r[6],
+                })
         con.close()
-        return render_template("checkin/admin_dashboard.html", checkins=rows)
+        return total, items
+
+    @app.get("/api/admin/members")
+    def api_admin_members():
+        require_admin()
+        q = (request.args.get("q") or "").strip()
+        tier = (request.args.get("tier") or "").strip().lower() or None
+        status = (request.args.get("status") or "").strip().lower() or None
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+            per_page = min(100, max(1, int(request.args.get("per_page", "25"))))
+        except Exception:
+            page, per_page = 1, 25
+        try:
+            total, items = _query_members_list(q or None, tier, status, page, per_page)
+            return jsonify({"ok": True, "page": page, "per_page": per_page, "total": total, "items": items})
+        except Exception as e:
+            return jsonify({"ok": False, "error": str(e)}), 500
+
+    @app.get("/api/admin/members/<int:member_id>")
+    def api_admin_member_detail(member_id: int):
+        require_admin()
+        con = connect_db(); cur = con.cursor()
+        # member row
+        try:
+            cur.execute(
+                ("SELECT id, name, email_lower, phone_e164, status, membership_tier, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
+                 "SELECT id, name, email_lower, phone_e164, status, membership_tier, updated_at FROM members WHERE id=?"),
+                (member_id,)
+            )
+            r = cur.fetchone()
+            if not r:
+                con.close(); return jsonify({"ok": False, "error": "Not found"}), 404
+            if using_postgres():
+                member = {"id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
+                          "phone_e164": r.get("phone_e164"), "status": r.get("status"),
+                          "tier": r.get("membership_tier"), "updated_at": r.get("updated_at")}
+            else:
+                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4],
+                          "tier": r[5], "updated_at": r[6]}
+            # recent check-ins
+            cur.execute(
+                ("SELECT timestamp, method FROM check_ins WHERE member_id=%s ORDER BY timestamp DESC LIMIT 10" if using_postgres() else
+                 "SELECT timestamp, method FROM check_ins WHERE member_id=? ORDER BY timestamp DESC LIMIT 10"),
+                (member_id,)
+            )
+            rows = cur.fetchall()
+            recents = []
+            for rr in rows:
+                if using_postgres():
+                    recents.append({"timestamp": str(rr.get("timestamp")), "method": rr.get("method")})
+                else:
+                    recents.append({"timestamp": rr[0], "method": rr[1]})
+            con.close()
+            return jsonify({"ok": True, "member": member, "recent_checkins": recents})
+        except Exception as e:
+            try:
+                con.close()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
 
     @app.post("/admin/smtp_test")
     def admin_smtp_test():
@@ -842,30 +1357,20 @@ def create_app():
 
     @app.post("/api/qr/resend")
     def api_qr_resend():
-        # Accept email and/or phone; use whichever is provided
+        # Email-only kiosk resend to reduce input friction and enforce clean roster data
         payload = request.get_json(silent=True) or {}
         email_in = (payload.get("email") or request.form.get("email") or "").strip()
-        phone_in = (payload.get("phone") or request.form.get("phone") or "").strip()
         email_n = normalize_email(email_in) if email_in else None
-        phone_n = normalize_phone(phone_in) if phone_in else None
-        if not email_n and not phone_n:
-            return jsonify({"ok": False, "error": "Email or phone required"}), 400
+        if not email_n:
+            return jsonify({"ok": False, "error": "Email required"}), 400
 
         con = connect_db()
         cur = con.cursor()
-        member = None
-        if email_n:
-            cur.execute(
-                ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
-                (email_n,),
-            )
-            member = cur.fetchone()
-        if not member and phone_n:
-            cur.execute(
-                ("SELECT * FROM members WHERE phone_e164 = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE phone_e164 = ? AND status='active'"),
-                (phone_n,),
-            )
-            member = cur.fetchone()
+        cur.execute(
+            ("SELECT * FROM members WHERE email_lower = %s AND status='active'" if using_postgres() else "SELECT * FROM members WHERE email_lower = ? AND status='active'"),
+            (email_n,),
+        )
+        member = cur.fetchone()
         con.close()
 
         if not member:
@@ -874,32 +1379,93 @@ def create_app():
         token = ensure_qr_token(member)
         base_url = request.url_root.rstrip("/")
         link = f"{base_url}/member/qr?token={token}"
+        wallet_available = WALLET_PASS_ENABLED and wallet_pass_configured()
+        wallet_link = f"{base_url}/member/pass.apple?token={token}" if wallet_available else None
+        wallet_text = f"Add to Apple Wallet: {wallet_link}\n\n" if wallet_link else ""
+        full_name = (member.get("name") if isinstance(member, dict) else member["name"]) or ""
+        full_name = full_name.strip()
+        first_name = full_name.split()[0] if full_name else "there"
+        preview_text = "Here's your Atlas Gym check-in QR code. Scan it at the kiosk for a breezy arrival."
         # Generate inline QR image
         qr_png = generate_qr_png(token, box_size=10, border=2)
+        wallet_button_html = (
+            f"<a href=\"{wallet_link}\" style=\"display:inline-flex;align-items:center;justify-content:center;background:#0f172a;color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:14px;font-weight:700;font-size:16px;letter-spacing:0.3px;\">Add to Apple Wallet</a>"
+            if wallet_link else ""
+        )
         body = (
-            f"Hi {member['name']},\n\n"
-            f"Here is your Atlas Gym check-in code. You can scan the QR below or open it in your browser.\n\n"
-            f"Open link: {link}\n\n"
-            f"– Atlas Gym"
+            f"Hi {first_name},\n\n"
+            f"Here is your Atlas Gym check-in QR. Scan it at the kiosk or open it on your phone using the link below.\n\n"
+            f"Open link: {link}\n"
+            f"{wallet_text}"
+            f"- The Atlas Gym Team\n"
+            f"GymSense — Your gym operations, simplified."
         )
         body_html = f"""
-        <div style='font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.5;color:#eef2f7;background:#000;padding:20px'>
-          <div style='max-width:560px;margin:0 auto;background:#0a0a0a;border:1px solid #39FF14;border-radius:12px;padding:20px;box-shadow:0 0 20px rgba(57,255,20,0.2)'>
-            <h2 style='margin:0 0 12px;font-size:22px;letter-spacing:1px'>THE ATLAS GYM CHECK-IN</h2>
-            <p style='color:#c8c8c8;margin:0 0 8px'>Hi {member['name']},</p>
-            <p style='color:#c8c8c8;margin:0 0 12px'>Show this QR at the front desk kiosk to check in.</p>
-            <div style='text-align:center;margin:16px 0'>
-              <img src='cid:qrimg' width='280' height='280' alt='Your QR Code' style='background:#fff;border-radius:8px;border:2px solid #233152' />
-            </div>
-            <p style='margin:14px 0'>
-              <a href='{link}' style='display:inline-block;background:#39FF14;color:#000;padding:12px 16px;border-radius:12px;text-decoration:none;font-weight:900;letter-spacing:0.4px'>Open My QR Code</a>
-            </p>
-          </div>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Your Atlas Gym check-in code</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Oleo+Script:wght@700&display=swap" rel="stylesheet" />
+  </head>
+  <body style="margin:0;padding:32px 16px;background:#f5f5f5;font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;color:#101418;">
+    <div style="display:none;font-size:1px;color:#f5f5f5;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">{preview_text}</div>
+    <div style="max-width:560px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:20px;padding:32px;">
+      <div style="margin-bottom:24px;">
+        <div style="font-size:24px;font-weight:700;margin:0;">The Atlas Gym</div>
+        <div style="margin-top:6px;color:#6b7280;font-size:14px;">23282 Del Lago Dr, Laguna Hills, CA 92653</div>
+      </div>
+      <h1 style="font-size:24px;margin:0 0 12px;">Your check-in code</h1>
+      <p style="margin:0 0 24px;color:#374151;font-size:16px;">Hi {first_name}, your QR code is ready for your next visit. Show it at the kiosk or tap below to open it on your phone.</p>
+      <div style="text-align:center;padding:24px;border:1px solid #e5e7eb;border-radius:16px;background:#f9fafb;margin-bottom:24px;">
+        <img src="cid:qrimg" width="240" height="240" alt="Your Atlas Gym QR Code" style="display:block;margin:0 auto 20px;border-radius:12px;border:1px solid #e5e7eb;background:#ffffff;" />
+        <div style="display:flex;flex-direction:column;gap:12px;align-items:center;">
+          {wallet_button_html}
+          <a href="{link}" style="display:inline-flex;align-items:center;justify-content:center;width:auto;background:#ffffff;color:#0f172a;text-decoration:none;padding:13px 26px;border-radius:14px;font-weight:600;font-size:15px;border:1px solid #cbd5f5;">Open my QR code</a>
         </div>
+      </div>
+      <p style="margin:0;color:#6b7280;font-size:14px;">Save this email or add the link to your wallet for quicker access next time.</p>
+      <hr style="border:none;border-top:1px solid #e5e7eb;margin:32px 0 0;" />
+    </div>
+  </body>
+</html>
         """
         inline = [("qr.png", qr_png, "image/png", "<qrimg>")] if qr_png else None
         ok = send_email(email_n or "", "Your Atlas Gym Check-In Code", body, body_html, inline_images=inline) if email_n else True
-        return jsonify({"ok": ok})
+        return jsonify({"ok": ok, "wallet": wallet_available})
+
+    @app.post("/api/pass/apple")
+    def api_pass_apple():
+        return jsonify({"ok": False, "error": "Use GET /member/pass.apple?token=..."}), 405
+
+    @app.get("/member/pass.apple")
+    def member_pass_apple():
+        if not WALLET_PASS_ENABLED or not wallet_pass_configured():
+            abort(404)
+        token = (request.args.get("token") or "").strip()
+        if not token:
+            return "Missing token", 400
+        member = _find_member_by_qr_token(token)
+        if not member:
+            abort(404)
+        try:
+            result = build_member_wallet_pass(member, token, request.url_root.rstrip("/"))
+        except Exception as exc:
+            print("Wallet pass generation failed:", exc)
+            return "Unable to generate pass", 500
+        bio = io.BytesIO(result.data)
+        bio.seek(0)
+        response = send_file(
+            bio,
+            mimetype=result.content_type,
+            as_attachment=True,
+            download_name=result.filename,
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/member/qr")
     def member_qr_page():

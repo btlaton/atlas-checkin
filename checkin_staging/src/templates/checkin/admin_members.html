@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Members • The Atlas Gym</title>
+    <link rel="stylesheet" href="/static/checkin/staff.css" />
+  </head>
+  <body class="staff-body">
+    <div class="staff-shell">
+      <header class="staff-header">
+        <div class="brand">
+          <div class="brand-title">The Atlas Gym</div>
+          <p class="brand-tagline">23282 Del Lago Dr, Laguna Hills, CA 92653</p>
+        </div>
+        <nav class="staff-nav">
+          <a href="/staff" class="nav-link">Staff Console</a>
+          <a href="/admin/logout" class="nav-link">Sign out</a>
+        </nav>
+      </header>
+
+      <main class="staff-main">
+        <section class="panel directory-panel">
+          <div class="panel-header">
+            <h2>Member Directory</h2>
+            <span id="count" class="muted"></span>
+          </div>
+          <form class="filters" onsubmit="return false;">
+            <div class="filter-group">
+              <label for="q">Search</label>
+              <input id="q" type="text" placeholder="Name or email" autocomplete="off" />
+            </div>
+            <div class="filter-group">
+              <label for="tier">Tier</label>
+              <select id="tier">
+                <option value="">Any</option>
+                <option value="essential">Essential</option>
+                <option value="elevated">Elevated</option>
+                <option value="elite">Elite</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label for="status">Status</label>
+              <select id="status">
+                <option value="">Any</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+            <button id="apply" type="button" class="primary-btn filter-btn">Apply Filters</button>
+          </form>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Email</th>
+                  <th>Tier</th>
+                  <th>Status</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div class="table-controls">
+            <button id="prev" type="button" class="ghost-btn">Previous</button>
+            <div id="pageinfo" class="muted"></div>
+            <button id="next" type="button" class="ghost-btn">Next</button>
+          </div>
+        </section>
+
+        <section class="panel detail-panel" id="detail" style="display:none;">
+          <div class="panel-header">
+            <h2>Member Detail</h2>
+            <span id="detail-meta" class="muted"></span>
+          </div>
+          <div id="detail-content" class="detail-content muted">Select a member to view info.</div>
+        </section>
+      </main>
+
+      <footer class="staff-footer">
+        <span>© {{ datetime.utcnow().year }} GymSense — Your gym operations, simplified.</span>
+      </footer>
+    </div>
+
+    <script src="/static/checkin/admin_members.js" defer></script>
+  </body>
+</html>
