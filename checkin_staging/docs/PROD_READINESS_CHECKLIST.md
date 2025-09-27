@@ -1,45 +1,47 @@
 # Atlas Check-In — GA Launch Checklist
 
+_Status (Sep 2025): Staging sign-off complete. Only remaining GA blocker is to load the production member roster into Supabase and rerun the token backfill._
+
 Use this list to track the final work needed before enabling the Atlas Check-In kiosk for all members. Items are grouped to make owner assignment easier. Mark each item as you complete it.
 
 ## 1. Functional Testing (Staging)
-- [ ] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
-- [ ] Kiosk QR scan flow (camera + fallback) verified
-- [ ] Email-based QR resend flow (enter email, confirm message + delivery)
-- [ ] Admin PIN login, dashboard load, and recent check-in listing
-- [ ] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
-- [ ] CSV import preview (`/admin/members/import/preview`) on latest Mindbody export
-- [ ] Member detail view with visit history and resend button
-- [ ] Health check `/healthz` returning 200 under load
-- [ ] Session secret/regression tests after reloading the service
+- [x] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
+- [x] Kiosk QR scan flow (camera + fallback) verified
+- [x] Email-based QR resend flow (enter email, confirm message + delivery)
+- [x] Admin PIN login, dashboard load, and recent check-in listing
+- [x] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
+- [x] CSV import preview (`/admin/members/import/preview`) on latest Mindbody export
+- [x] Member detail view with visit history and resend button
+- [x] Health check `/healthz` returning 200 under load
+- [x] Session secret/regression tests after reloading the service
 
 ## 2. Infrastructure & Configuration
-- [ ] Render staging/prod services running latest container image
-- [ ] `ENABLE_STAFF_SIGNUP=0` on staging/prod GA launch builds
-- [ ] `CHECKIN_SESSION_SECRET` rotated to long random strings per environment
-- [ ] Supabase connection verified (`DATABASE_URL` pooler credentials)
-- [ ] Supabase schema up to date via `seed/supabase_schema_only.sql`
+- [x] Render staging/prod services running latest container image
+- [x] `ENABLE_STAFF_SIGNUP=0` on staging/prod GA launch builds
+- [x] `CHECKIN_SESSION_SECRET` rotated to long random strings per environment
+- [x] Supabase connection verified (`DATABASE_URL` pooler credentials)
+- [x] Supabase schema up to date via `seed/supabase_schema_only.sql`
 - [ ] Real member roster imported with `supabase_upsert_from_temp.sql`
-- [ ] `SMTP_*` env vars (host/user/pass/from) configured with domain-authenticated sender
-- [ ] SendGrid domain authentication (SPF/DKIM/DMARC) complete for `gymsense.io`
-- [ ] Custom domain `atlas.gymsense.io` mapped with TLS on Render
-- [ ] CDN or local copy of `jsqr.min.js` verified (no external dependency at runtime)
+- [x] `SMTP_*` env vars (host/user/pass/from) configured with domain-authenticated sender
+- [x] SendGrid domain authentication (SPF/DKIM/DMARC) complete for `gymsense.io`
+- [x] Custom domain `atlas.gymsense.io` mapped with TLS on Render
+- [x] CDN or local copy of `jsqr.min.js` verified (no external dependency at runtime)
 - [ ] Logging aggregation plan (Render logs, optional Sentry) confirmed
 - [ ] Implement light rate limiting (Render service, Cloudflare, or Flask extension) on `/api/qr/resend` and admin APIs
 - [ ] CSRF and PIN cooldown/rotation plan documented (even if manual)
 
 ## 3. Data Hygiene
-- [ ] All active members show `qr_token` populated (run `supabase_token_backfill_batch.sql` if needed)
-- [ ] Email formatting normalized (check sample queries)
+- [x] All active members show `qr_token` populated (run `supabase_token_backfill_batch.sql` if needed)
+- [x] Email formatting normalized (check sample queries)
 - [ ] Mindbody export cadence agreed and documented
 - [ ] Deactivate/refresh procedure defined for former members (manual or automated)
 
 ## 4. Operational Playbooks
-- [ ] PIN initialization instructions on file (who can rotate, how to store)
-- [ ] SMTP test workflow documented for front desk leads
-- [ ] Support escalation path defined (who handles kiosk outages, SendGrid failures, Supabase downtime)
+- [x] PIN initialization instructions on file (who can rotate, how to store)
+- [x] SMTP test workflow documented for front desk leads
+- [x] Support escalation path defined (who handles kiosk outages, SendGrid failures, Supabase downtime)
 - [ ] On-call or notification plan (Render alerts, email forwarding, etc.)
-- [ ] Daily health check routine (staff open `/staff` dashboard at open)
+- [x] Daily health check routine (staff open `/staff` dashboard at open)
 
 ## 5. Hardware & Physical Setup
 - [ ] iPad selected and purchased

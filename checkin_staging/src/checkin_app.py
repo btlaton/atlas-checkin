@@ -6,6 +6,7 @@ import hmac
 import secrets
 import smtplib
 import io
+import json
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
@@ -57,6 +58,9 @@ SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me"
 STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
 STAFF_SIGNUP_ENABLED = os.environ.get("ENABLE_STAFF_SIGNUP", "0").strip().lower() in {"1", "true", "yes", "on"}
 WALLET_PASS_ENABLED = os.environ.get("ENABLE_WALLET_PASS", "0").strip().lower() in {"1", "true", "yes", "on"}
+COMMERCE_ENABLED = os.environ.get("ENABLE_COMMERCE", "0").strip().lower() in {"1", "true", "yes", "on"}
+COMMERCE_DEFAULT_CURRENCY = os.environ.get("COMMERCE_CURRENCY", "USD").upper()
+COMMERCE_ORDER_TYPES = {"retail", "membership", "guest_pass", "service", "mixed"}
 
 
 def using_postgres() -> bool:
@@ -229,6 +233,204 @@ def init_db():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE,
+            description TEXT,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_product_categories_name_lower
+        ON product_categories(LOWER(name))
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE,
+            barcode TEXT,
+            product_sku TEXT,
+            product_kind TEXT NOT NULL DEFAULT 'retail',
+            service_type TEXT,
+            service_category TEXT,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sell_online INTEGER NOT NULL DEFAULT 0,
+            inventory_tracking INTEGER NOT NULL DEFAULT 0,
+            default_price_type TEXT NOT NULL DEFAULT 'retail',
+            our_cost_cents INTEGER,
+            created_by TEXT,
+            updated_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_products_active_kind
+        ON products(product_kind, is_active)
+        WHERE is_active = 1
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_products_sku
+        ON products(product_sku)
+        WHERE product_sku IS NOT NULL
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            price_type TEXT NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            billing_period TEXT,
+            billing_interval INTEGER,
+            benefit_quantity INTEGER,
+            benefit_unit TEXT,
+            benefit_window_quantity INTEGER,
+            benefit_window_unit TEXT,
+            is_unlimited INTEGER NOT NULL DEFAULT 0,
+            stripe_price_id TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_product_price_unique
+        ON product_prices(product_id, price_type)
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_product_prices_active
+        ON product_prices(product_id)
+        WHERE is_active = 1
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_number TEXT,
+            member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,
+            guest_name TEXT,
+            guest_email TEXT,
+            guest_phone TEXT,
+            staff_id INTEGER REFERENCES staff(id) ON DELETE SET NULL,
+            order_type TEXT NOT NULL DEFAULT 'retail',
+            status TEXT NOT NULL DEFAULT 'draft',
+            currency TEXT NOT NULL DEFAULT 'USD',
+            subtotal_cents INTEGER NOT NULL DEFAULT 0,
+            tax_cents INTEGER NOT NULL DEFAULT 0,
+            discount_cents INTEGER NOT NULL DEFAULT 0,
+            tip_cents INTEGER NOT NULL DEFAULT 0,
+            total_cents INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            checkout_session_id TEXT,
+            payment_intent_id TEXT,
+            payment_link_url TEXT,
+            expires_at TIMESTAMP,
+            paid_at TIMESTAMP,
+            canceled_at TIMESTAMP,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_number
+        ON orders(order_number)
+        WHERE order_number IS NOT NULL
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+            price_id INTEGER REFERENCES product_prices(id) ON DELETE SET NULL,
+            description TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            unit_amount_cents INTEGER NOT NULL,
+            tax_cents INTEGER NOT NULL DEFAULT 0,
+            discount_cents INTEGER NOT NULL DEFAULT 0,
+            total_cents INTEGER NOT NULL,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_order_items_order
+        ON order_items(order_id)
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS order_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            amount_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            status TEXT NOT NULL,
+            payment_method_type TEXT,
+            stripe_payment_intent_id TEXT,
+            stripe_checkout_session_id TEXT,
+            stripe_charge_id TEXT,
+            receipt_url TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            raw_payload TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_order_payments_intent
+        ON order_payments(stripe_payment_intent_id)
+        WHERE stripe_payment_intent_id IS NOT NULL
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_order_payments_order_status
+        ON order_payments(order_id, status)
+        """
+    )
+
     cur.execute("SELECT COUNT(*) AS c FROM locations")
     if cur.fetchone()[0] == 0:
         cur.execute("INSERT INTO locations(name, timezone) VALUES (?, ?)", ("Atlas Gym", "America/Los_Angeles"))
@@ -288,6 +490,335 @@ def normalize_phone(phone: str | None) -> str | None:
     return "+" + digits if digits else None
 
 
+def _coerce_json(value):
+    if value is None or value == "":
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return {}
+
+
+def generate_order_number() -> str:
+    now = datetime.now(timezone.utc)
+    return f"ORD{now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(2).upper()}"
+
+
+def _row_to_product(row) -> dict:
+    if using_postgres():
+        getter = row.get
+    else:
+        getter = row.__getitem__
+    return {
+        "id": getter("id"),
+        "category_id": getter("category_id"),
+        "name": getter("name"),
+        "slug": getter("slug"),
+        "barcode": getter("barcode"),
+        "product_sku": getter("product_sku"),
+        "product_kind": getter("product_kind"),
+        "service_type": getter("service_type"),
+        "service_category": getter("service_category"),
+        "description": getter("description"),
+        "default_price_type": getter("default_price_type"),
+    }
+
+
+def _row_to_price(row) -> dict:
+    if using_postgres():
+        getter = row.get
+    else:
+        getter = row.__getitem__
+    return {
+        "id": getter("id"),
+        "product_id": getter("product_id"),
+        "price_type": getter("price_type"),
+        "amount_cents": getter("amount_cents"),
+        "currency": getter("currency"),
+        "billing_period": getter("billing_period"),
+        "billing_interval": getter("billing_interval"),
+        "benefit_quantity": getter("benefit_quantity"),
+        "benefit_unit": getter("benefit_unit"),
+        "benefit_window_quantity": getter("benefit_window_quantity"),
+        "benefit_window_unit": getter("benefit_window_unit"),
+        "is_unlimited": bool(getter("is_unlimited")),
+        "stripe_price_id": getter("stripe_price_id"),
+        "is_default": bool(getter("is_default")),
+        "is_active": bool(getter("is_active")),
+        "metadata": _coerce_json(getter("metadata")),
+    }
+
+
+def load_product_and_price(cur, product_id: int, price_type: str | None) -> tuple[dict, dict]:
+    if using_postgres():
+        cur.execute(
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, default_price_type
+            FROM products
+            WHERE id = %s
+            """,
+            (product_id,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, default_price_type
+            FROM products
+            WHERE id = ?
+            """,
+            (product_id,),
+        )
+    product_row = cur.fetchone()
+    if not product_row:
+        return None, None
+    product = _row_to_product(product_row)
+    resolved_price_type = price_type or product.get("default_price_type")
+
+    if using_postgres():
+        cur.execute(
+            """
+            SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                   billing_interval, benefit_quantity, benefit_unit, benefit_window_quantity,
+                   benefit_window_unit, is_unlimited, stripe_price_id, is_default,
+                   is_active, metadata
+            FROM product_prices
+            WHERE product_id = %s AND price_type = %s AND is_active = TRUE
+            """,
+            (product_id, resolved_price_type),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                   billing_interval, benefit_quantity, benefit_unit, benefit_window_quantity,
+                   benefit_window_unit, is_unlimited, stripe_price_id, is_default,
+                   is_active, metadata
+            FROM product_prices
+            WHERE product_id = ? AND price_type = ? AND is_active = 1
+            """,
+            (product_id, resolved_price_type),
+        )
+    price_row = cur.fetchone()
+    if not price_row:
+        return product, None
+    price = _row_to_price(price_row)
+    return product, price
+
+
+def fetch_product_catalog(include_inactive: bool = False) -> dict:
+    con = connect_db()
+    cur = con.cursor()
+    try:
+        categories: list[dict] = []
+        category_map: dict[int, dict] = {}
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, name, slug, description, sort_order
+                FROM product_categories
+                ORDER BY sort_order ASC, name ASC
+                """
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                cat = {
+                    "id": row.get("id"),
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "description": row.get("description"),
+                    "sort_order": row.get("sort_order") or 0,
+                    "products": [],
+                }
+                categories.append(cat)
+                category_map[cat["id"]] = cat
+        else:
+            cur.execute(
+                """
+                SELECT id, name, slug, description, sort_order
+                FROM product_categories
+                ORDER BY sort_order ASC, name ASC
+                """
+            )
+            for row in cur.fetchall():
+                cat = {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "slug": row["slug"],
+                    "description": row["description"],
+                    "sort_order": row["sort_order"] or 0,
+                    "products": [],
+                }
+                categories.append(cat)
+                category_map[cat["id"]] = cat
+
+        products: list[dict] = []
+        product_query = (
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, is_active,
+                   sell_online, inventory_tracking, default_price_type, our_cost_cents,
+                   created_at, updated_at
+            FROM products
+            """
+        )
+        product_params: list = []
+        if using_postgres():
+            if not include_inactive:
+                product_query += " WHERE is_active = %s"
+                product_params.append(True)
+            product_query += " ORDER BY name ASC"
+            cur.execute(product_query, tuple(product_params))
+        else:
+            if not include_inactive:
+                product_query += " WHERE is_active = 1"
+            product_query += " ORDER BY name ASC"
+            cur.execute(product_query)
+        product_rows = cur.fetchall()
+        product_map: dict[int, dict] = {}
+        for row in product_rows:
+            if using_postgres():
+                pid = row.get("id")
+                item = {
+                    "id": pid,
+                    "category_id": row.get("category_id"),
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "barcode": row.get("barcode"),
+                    "product_sku": row.get("product_sku"),
+                    "product_kind": row.get("product_kind"),
+                    "service_type": row.get("service_type"),
+                    "service_category": row.get("service_category"),
+                    "description": row.get("description"),
+                    "is_active": bool(row.get("is_active")),
+                    "sell_online": bool(row.get("sell_online")),
+                    "inventory_tracking": bool(row.get("inventory_tracking")),
+                    "default_price_type": row.get("default_price_type"),
+                    "our_cost_cents": row.get("our_cost_cents"),
+                    "prices": [],
+                }
+            else:
+                pid = row["id"]
+                item = {
+                    "id": pid,
+                    "category_id": row["category_id"],
+                    "name": row["name"],
+                    "slug": row["slug"],
+                    "barcode": row["barcode"],
+                    "product_sku": row["product_sku"],
+                    "product_kind": row["product_kind"],
+                    "service_type": row["service_type"],
+                    "service_category": row["service_category"],
+                    "description": row["description"],
+                    "is_active": bool(row["is_active"]),
+                    "sell_online": bool(row["sell_online"]),
+                    "inventory_tracking": bool(row["inventory_tracking"]),
+                    "default_price_type": row["default_price_type"],
+                    "our_cost_cents": row["our_cost_cents"],
+                    "prices": [],
+                }
+            products.append(item)
+            product_map[pid] = item
+
+        if product_map:
+            price_query = (
+                """
+                SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                       billing_interval, benefit_quantity, benefit_unit,
+                       benefit_window_quantity, benefit_window_unit, is_unlimited,
+                       stripe_price_id, is_default, is_active, metadata
+                FROM product_prices
+                WHERE product_id = ANY(%s)
+                ORDER BY product_id, price_type
+                """
+                if using_postgres()
+                else
+                """
+                SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                       billing_interval, benefit_quantity, benefit_unit,
+                       benefit_window_quantity, benefit_window_unit, is_unlimited,
+                       stripe_price_id, is_default, is_active, metadata
+                FROM product_prices
+                WHERE product_id IN (
+                """
+            )
+            if using_postgres():
+                cur.execute(price_query, (list(product_map.keys()),))
+            else:
+                placeholders = ",".join("?" for _ in product_map)
+                cur.execute(price_query + placeholders + ") ORDER BY product_id, price_type", tuple(product_map.keys()))
+            for row in cur.fetchall():
+                if using_postgres():
+                    pid = row.get("product_id")
+                    target = product_map.get(pid)
+                    if not target:
+                        continue
+                    price = {
+                        "id": row.get("id"),
+                        "price_type": row.get("price_type"),
+                        "amount_cents": row.get("amount_cents"),
+                        "currency": row.get("currency"),
+                        "billing_period": row.get("billing_period"),
+                        "billing_interval": row.get("billing_interval"),
+                        "benefit_quantity": row.get("benefit_quantity"),
+                        "benefit_unit": row.get("benefit_unit"),
+                        "benefit_window_quantity": row.get("benefit_window_quantity"),
+                        "benefit_window_unit": row.get("benefit_window_unit"),
+                        "is_unlimited": bool(row.get("is_unlimited")),
+                        "stripe_price_id": row.get("stripe_price_id"),
+                        "is_default": bool(row.get("is_default")),
+                        "is_active": bool(row.get("is_active")),
+                        "metadata": _coerce_json(row.get("metadata")),
+                    }
+                else:
+                    pid = row["product_id"]
+                    target = product_map.get(pid)
+                    if not target:
+                        continue
+                    price = {
+                        "id": row["id"],
+                        "price_type": row["price_type"],
+                        "amount_cents": row["amount_cents"],
+                        "currency": row["currency"],
+                        "billing_period": row["billing_period"],
+                        "billing_interval": row["billing_interval"],
+                        "benefit_quantity": row["benefit_quantity"],
+                        "benefit_unit": row["benefit_unit"],
+                        "benefit_window_quantity": row["benefit_window_quantity"],
+                        "benefit_window_unit": row["benefit_window_unit"],
+                        "is_unlimited": bool(row["is_unlimited"]),
+                        "stripe_price_id": row["stripe_price_id"],
+                        "is_default": bool(row["is_default"]),
+                        "is_active": bool(row["is_active"]),
+                        "metadata": _coerce_json(row["metadata"]),
+                    }
+                target.setdefault("prices", []).append(price)
+
+        uncategorized: list[dict] = []
+        for item in products:
+            cat_id = item.get("category_id")
+            if cat_id and cat_id in category_map:
+                category_map[cat_id]["products"].append(item)
+            else:
+                uncategorized.append(item)
+
+        ordered_categories = [c for c in categories if c.get("products")]
+        if uncategorized:
+            ordered_categories.append({
+                "id": None,
+                "name": "Uncategorized",
+                "slug": None,
+                "description": None,
+                "sort_order": 999,
+                "products": uncategorized,
+            })
+
+        return {"categories": ordered_categories, "products": products}
+    finally:
+        con.close()
 def ensure_qr_token(member) -> str:
     token = member["qr_token"]
     if token:
@@ -525,6 +1056,272 @@ def create_app():
         if not session.get("admin"):
             return redirect(url_for("admin_login", next="/staff"))
         return render_template("checkin/staff_dashboard.html", datetime=datetime)
+
+    @app.get("/api/commerce/catalog")
+    def api_commerce_catalog():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        include_inactive = request.args.get("include_inactive", "0").strip().lower() in {"1", "true", "yes", "on"}
+        catalog = fetch_product_catalog(include_inactive=include_inactive)
+        catalog.update({"ok": True, "currency": COMMERCE_DEFAULT_CURRENCY})
+        return jsonify(catalog)
+
+    @app.post("/api/commerce/orders")
+    def api_commerce_create_order():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+        payload = request.get_json(silent=True) or {}
+        items_payload = payload.get("items") or []
+        if not items_payload:
+            return jsonify({"ok": False, "error": "No items provided"}), 400
+
+        order_type = (payload.get("order_type") or "retail").strip()
+        if order_type not in COMMERCE_ORDER_TYPES:
+            return jsonify({"ok": False, "error": f"Unsupported order_type '{order_type}'"}), 400
+
+        currency = (payload.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+        if currency != COMMERCE_DEFAULT_CURRENCY:
+            return jsonify({"ok": False, "error": f"Unsupported currency '{currency}'"}), 400
+
+        member_id = payload.get("member_id")
+        guest_name = (payload.get("guest_name") or "").strip() or None
+        guest_email = normalize_email(payload.get("guest_email"))
+        guest_phone = normalize_phone(payload.get("guest_phone"))
+        notes = (payload.get("notes") or "").strip() or None
+        metadata_value = payload.get("metadata")
+
+        try:
+            expires_minutes = int(payload.get("expires_in_minutes") or 30)
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid expires_in_minutes"}), 400
+        if expires_minutes <= 0:
+            expires_minutes = 30
+        expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+
+        con = connect_db()
+        cur = con.cursor()
+        try:
+            if member_id:
+                if using_postgres():
+                    cur.execute("SELECT id FROM members WHERE id = %s", (member_id,))
+                else:
+                    cur.execute("SELECT id FROM members WHERE id = ?", (member_id,))
+                if not cur.fetchone():
+                    return jsonify({"ok": False, "error": "Member not found"}), 404
+
+            prepared_items = []
+            subtotal_cents = 0
+            for idx, raw_item in enumerate(items_payload):
+                product_id = raw_item.get("product_id")
+                if not product_id:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: missing product_id"}), 400
+                price_type = raw_item.get("price_type")
+                quantity_raw = raw_item.get("quantity", 1)
+                try:
+                    quantity = int(quantity_raw)
+                except Exception:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: invalid quantity"}), 400
+                if quantity <= 0:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: quantity must be > 0"}), 400
+
+                product, price = load_product_and_price(cur, product_id, price_type)
+                if not product:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: product not found"}), 404
+                if not price:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: price not available"}), 400
+
+                line_total = int(price["amount_cents"] or 0) * quantity
+                subtotal_cents += line_total
+                prepared_items.append(
+                    {
+                        "product": product,
+                        "price": price,
+                        "quantity": quantity,
+                        "line_total": line_total,
+                    }
+                )
+
+            total_cents = subtotal_cents  # taxes/discounts applied later
+            order_number = payload.get("order_number") or generate_order_number()
+            status = "pending"
+
+            metadata_pg = metadata_value if metadata_value is not None else None
+            metadata_sqlite = json.dumps(metadata_value) if metadata_value is not None else None
+            expires_at_value = expires_at_dt if using_postgres() else expires_at_dt.isoformat()
+
+            if using_postgres():
+                cur.execute(
+                    """
+                    INSERT INTO orders
+                        (order_number, member_id, guest_name, guest_email, guest_phone, staff_id,
+                         order_type, status, currency, subtotal_cents, tax_cents, discount_cents,
+                         tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                         payment_link_url, expires_at, metadata)
+                    VALUES
+                        (%s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, NULL, NULL,
+                         NULL, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        order_number,
+                        member_id,
+                        guest_name,
+                        guest_email,
+                        guest_phone,
+                        None,
+                        order_type,
+                        status,
+                        currency,
+                        subtotal_cents,
+                        0,
+                        0,
+                        0,
+                        total_cents,
+                        notes,
+                        expires_at_value,
+                        metadata_pg,
+                    ),
+                )
+                order_id = cur.fetchone()[0]
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO orders
+                        (order_number, member_id, guest_name, guest_email, guest_phone, staff_id,
+                         order_type, status, currency, subtotal_cents, tax_cents, discount_cents,
+                         tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                         payment_link_url, expires_at, metadata)
+                    VALUES
+                        (?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, NULL, NULL,
+                         NULL, ?, ?)
+                    """,
+                    (
+                        order_number,
+                        member_id,
+                        guest_name,
+                        guest_email,
+                        guest_phone,
+                        None,
+                        order_type,
+                        status,
+                        currency,
+                        subtotal_cents,
+                        0,
+                        0,
+                        0,
+                        total_cents,
+                        notes,
+                        expires_at_value,
+                        metadata_sqlite,
+                    ),
+                )
+                order_id = cur.lastrowid
+
+            for item in prepared_items:
+                product = item["product"]
+                price = item["price"]
+                quantity = item["quantity"]
+                line_total = item["line_total"]
+                metadata_line_pg = {"price_type": price["price_type"]}
+                metadata_line_sqlite = json.dumps(metadata_line_pg)
+
+                if using_postgres():
+                    cur.execute(
+                        """
+                        INSERT INTO order_items
+                            (order_id, product_id, price_id, description, quantity,
+                             unit_amount_cents, tax_cents, discount_cents, total_cents, metadata)
+                        VALUES
+                            (%s, %s, %s, %s, %s,
+                             %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            order_id,
+                            product["id"],
+                            price["id"],
+                            product["name"],
+                            quantity,
+                            price["amount_cents"],
+                            0,
+                            0,
+                            line_total,
+                            metadata_line_pg,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO order_items
+                            (order_id, product_id, price_id, description, quantity,
+                             unit_amount_cents, tax_cents, discount_cents, total_cents, metadata)
+                        VALUES
+                            (?, ?, ?, ?, ?,
+                             ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            order_id,
+                            product["id"],
+                            price["id"],
+                            product["name"],
+                            quantity,
+                            price["amount_cents"],
+                            0,
+                            0,
+                            line_total,
+                            metadata_line_sqlite,
+                        ),
+                    )
+
+            con.commit()
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "order": {
+                        "id": order_id,
+                        "order_number": order_number,
+                        "status": status,
+                        "currency": currency,
+                        "subtotal_cents": subtotal_cents,
+                        "tax_cents": 0,
+                        "discount_cents": 0,
+                        "tip_cents": 0,
+                        "total_cents": total_cents,
+                        "expires_at": expires_at_dt.isoformat(),
+                        "items": [
+                            {
+                                "product_id": item["product"]["id"],
+                                "product_name": item["product"]["name"],
+                                "price_type": item["price"]["price_type"],
+                                "quantity": item["quantity"],
+                                "unit_amount_cents": item["price"]["amount_cents"],
+                                "total_cents": item["line_total"],
+                            }
+                            for item in prepared_items
+                        ],
+                    },
+                }
+            )
+        except Exception as e:
+            try:
+                con.rollback()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
 
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
