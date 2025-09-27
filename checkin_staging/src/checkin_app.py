@@ -506,6 +506,560 @@ def generate_order_number() -> str:
     return f"ORD{now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(2).upper()}"
 
 
+def _append_session_placeholder(base_url: str, order_number: str) -> str:
+    if not base_url:
+        return base_url
+    url = base_url.strip()
+    if "{ORDER_NUMBER}" in url:
+        url = url.replace("{ORDER_NUMBER}", order_number)
+    sep = '&' if '?' in url else '?'
+    if "{CHECKOUT_SESSION_ID}" not in url:
+        url = f"{url}{sep}session_id={{CHECKOUT_SESSION_ID}}"
+        sep = '&'
+    if "order=" not in url:
+        url = f"{url}{sep}order={order_number}"
+    return url
+
+
+def _coalesce_row_value(row, key, index=0):
+    if row is None:
+        return None
+    if using_postgres():
+        return row.get(key)
+    if hasattr(row, "keys") and key in row.keys():
+        return row[key]
+    if isinstance(row, (list, tuple)):
+        try:
+            return row[index]
+        except Exception:
+            return None
+    return None
+
+
+def _update_order_status(cur, order_id: int, new_status: str, *, paid_at: datetime | None = None,
+                         checkout_session_id: str | None = None, payment_intent_id: str | None = None,
+                         payment_link_url: str | None = None, canceled_at: datetime | None = None):
+    if using_postgres():
+        cur.execute(
+            """
+            UPDATE orders
+               SET status = %s,
+                   paid_at = COALESCE(%s, paid_at),
+                   checkout_session_id = COALESCE(%s, checkout_session_id),
+                   payment_intent_id = COALESCE(%s, payment_intent_id),
+                   payment_link_url = COALESCE(%s, payment_link_url),
+                   canceled_at = COALESCE(%s, canceled_at),
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = %s
+            """,
+            (
+                new_status,
+                paid_at,
+                checkout_session_id,
+                payment_intent_id,
+                payment_link_url,
+                canceled_at,
+                order_id,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE orders
+               SET status = ?,
+                   paid_at = COALESCE(?, paid_at),
+                   checkout_session_id = COALESCE(?, checkout_session_id),
+                   payment_intent_id = COALESCE(?, payment_intent_id),
+                   payment_link_url = COALESCE(?, payment_link_url),
+                   canceled_at = COALESCE(?, canceled_at),
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+            """,
+            (
+                new_status,
+                paid_at.isoformat() if paid_at else None,
+                checkout_session_id,
+                payment_intent_id,
+                payment_link_url,
+                canceled_at.isoformat() if canceled_at else None,
+                order_id,
+            ),
+        )
+
+
+def _upsert_order_payment(cur, order_id: int, *, amount_cents: int | None, currency: str | None,
+                          status: str, payment_method_type: str | None, payment_intent_id: str | None,
+                          checkout_session_id: str | None, charge_id: str | None, receipt_url: str | None,
+                          error_code: str | None, error_message: str | None, raw_payload: str | None):
+    if not payment_intent_id:
+        return
+    if using_postgres():
+        cur.execute("SELECT id FROM order_payments WHERE stripe_payment_intent_id = %s", (payment_intent_id,))
+    else:
+        cur.execute("SELECT id FROM order_payments WHERE stripe_payment_intent_id = ?", (payment_intent_id,))
+    row = cur.fetchone()
+    amount_cents = int(amount_cents or 0)
+    currency = (currency or COMMERCE_DEFAULT_CURRENCY).upper()
+    if row:
+        payment_id = _coalesce_row_value(row, "id")
+        if using_postgres():
+            cur.execute(
+                """
+                UPDATE order_payments
+                   SET amount_cents = %s,
+                       currency = %s,
+                       status = %s,
+                       payment_method_type = %s,
+                       stripe_checkout_session_id = COALESCE(%s, stripe_checkout_session_id),
+                       stripe_charge_id = COALESCE(%s, stripe_charge_id),
+                       receipt_url = COALESCE(%s, receipt_url),
+                       error_code = %s,
+                       error_message = %s,
+                       raw_payload = %s,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = %s
+                """,
+                (
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                    payment_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE order_payments
+                   SET amount_cents = ?,
+                       currency = ?,
+                       status = ?,
+                       payment_method_type = ?,
+                       stripe_checkout_session_id = COALESCE(?, stripe_checkout_session_id),
+                       stripe_charge_id = COALESCE(?, stripe_charge_id),
+                       receipt_url = COALESCE(?, receipt_url),
+                       error_code = ?,
+                       error_message = ?,
+                       raw_payload = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """,
+                (
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                    payment_id,
+                ),
+            )
+    else:
+        if using_postgres():
+            cur.execute(
+                """
+                INSERT INTO order_payments (
+                    order_id, amount_cents, currency, status, payment_method_type,
+                    stripe_payment_intent_id, stripe_checkout_session_id, stripe_charge_id, receipt_url,
+                    error_code, error_message, raw_payload
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    order_id,
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    payment_intent_id,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO order_payments (
+                    order_id, amount_cents, currency, status, payment_method_type,
+                    stripe_payment_intent_id, stripe_checkout_session_id, stripe_charge_id, receipt_url,
+                    error_code, error_message, raw_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    payment_intent_id,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                ),
+            )
+
+
+def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    order_number = metadata.get("order_number")
+    session_id = session_obj.get("id")
+    if not order_id_raw and not session_id and not order_number:
+        return False
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None and session_id:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE checkout_session_id = %s", (session_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE checkout_session_id = ?", (session_id,))
+            row = cur.fetchone()
+        if row is None and order_number:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE order_number = %s", (order_number,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE order_number = ?", (order_number,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        current_status = (_coalesce_row_value(row, "status") or "").lower()
+        payment_status = (session_obj.get("payment_status") or "").lower()
+        if payment_status in {"paid", "no_payment_required"}:
+            new_status = "paid"
+        elif payment_status == "unpaid":
+            new_status = "awaiting_payment"
+        else:
+            new_status = current_status if current_status in {"paid", "refunded"} else "awaiting_payment"
+        payment_intent_id = session_obj.get("payment_intent")
+        checkout_url = session_obj.get("url")
+        now_utc = datetime.now(timezone.utc)
+
+        if new_status == "paid" and current_status != "paid":
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "paid",
+                paid_at=now_utc,
+                checkout_session_id=session_id,
+                payment_intent_id=payment_intent_id,
+                payment_link_url=checkout_url,
+            )
+        elif new_status == "awaiting_payment" and current_status in {"pending", "draft", "awaiting_payment"}:
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "awaiting_payment",
+                checkout_session_id=session_id,
+                payment_intent_id=payment_intent_id,
+                payment_link_url=checkout_url,
+            )
+
+        if new_status == "paid" and payment_intent_id:
+            amount_total = session_obj.get("amount_total") or 0
+            currency = (session_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+            _upsert_order_payment(
+                cur,
+                resolved_order_id,
+                amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method_type=None,
+                payment_intent_id=payment_intent_id,
+                checkout_session_id=session_id,
+                charge_id=None,
+                receipt_url=None,
+                error_code=None,
+                error_message=None,
+                raw_payload=raw_payload,
+            )
+
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_commerce_checkout_expired(session_obj: dict) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    session_id = session_obj.get("id")
+    if not order_id_raw and not session_id:
+        return False
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None and session_id:
+            if using_postgres():
+                cur.execute("SELECT id FROM orders WHERE checkout_session_id = %s", (session_id,))
+            else:
+                cur.execute("SELECT id FROM orders WHERE checkout_session_id = ?", (session_id,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        now_utc = datetime.now(timezone.utc)
+        _update_order_status(
+            cur,
+            resolved_order_id,
+            "expired",
+            checkout_session_id=session_id,
+            canceled_at=now_utc,
+        )
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_commerce_payment_intent(intent_obj: dict, outcome: str, raw_payload: str) -> bool:
+    payment_intent_id = intent_obj.get("id")
+    if not payment_intent_id:
+        return False
+    metadata = intent_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE payment_intent_id = %s", (payment_intent_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE payment_intent_id = ?", (payment_intent_id,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        current_status = (_coalesce_row_value(row, "status") or "").lower()
+
+        amount = intent_obj.get("amount_received") or intent_obj.get("amount") or 0
+        currency = (intent_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+        payment_method_type = None
+        pm_types = intent_obj.get("payment_method_types") or []
+        if pm_types:
+            payment_method_type = pm_types[0]
+        charges = intent_obj.get("charges") or {}
+        charge_id = None
+        receipt_url = None
+        if charges.get("data"):
+            charge = charges["data"][0]
+            charge_id = charge.get("id")
+            receipt_url = charge.get("receipt_url")
+            pmd = charge.get("payment_method_details") or {}
+            if not payment_method_type:
+                for key, val in pmd.items():
+                    if isinstance(val, dict):
+                        payment_method_type = key
+                        break
+        error_code = None
+        error_message = None
+        if outcome == "failed":
+            last_error = intent_obj.get("last_payment_error") or {}
+            error_code = last_error.get("code")
+            error_message = last_error.get("message")
+
+        now_utc = datetime.now(timezone.utc)
+        if outcome == "succeeded" and current_status != "paid":
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "paid",
+                paid_at=now_utc,
+                payment_intent_id=payment_intent_id,
+            )
+        elif outcome == "failed" and current_status not in {"paid", "refunded"}:
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "failed",
+                payment_intent_id=payment_intent_id,
+                canceled_at=now_utc,
+            )
+
+        status_value = "succeeded" if outcome == "succeeded" else "failed"
+        _upsert_order_payment(
+            cur,
+            resolved_order_id,
+            amount_cents=amount,
+            currency=currency,
+            status=status_value,
+            payment_method_type=payment_method_type,
+            payment_intent_id=payment_intent_id,
+            checkout_session_id=None,
+            charge_id=charge_id,
+            receipt_url=receipt_url,
+            error_code=error_code,
+            error_message=error_message,
+            raw_payload=raw_payload,
+        )
+
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_signup_checkout_session(session_obj: dict, stripe_module) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    if metadata.get("order_id"):
+        return False
+    try:
+        session_id = session_obj.get("id")
+        stripe_api_key = os.environ.get("STRIPE_API_KEY")
+        sess_full = session_obj
+        if stripe_api_key:
+            stripe_module.api_key = stripe_api_key
+        if session_id and stripe_api_key:
+            try:
+                sess_full = stripe_module.checkout.Session.retrieve(
+                    session_id,
+                    expand=["line_items", "customer", "subscription"],
+                )
+            except Exception:
+                sess_full = session_obj
+
+        cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
+        customer_id = (cust.get("id") if cust else sess_full.get("customer"))
+        customer_email = None
+        if sess_full.get("customer_details"):
+            customer_email = sess_full["customer_details"].get("email")
+        if not customer_email:
+            customer_email = sess_full.get("customer_email") or metadata.get("app_member_email")
+        customer_name = metadata.get("app_member_name") or (cust.get("name") if cust else None)
+
+        if not customer_email:
+            return True
+
+        con = connect_db(); cur = con.cursor()
+        try:
+            email_n = normalize_email(customer_email)
+            name = customer_name or "Member"
+            phone = (cust.get("phone") if cust else None)
+            if using_postgres():
+                cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
+            else:
+                cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
+            row = cur.fetchone()
+            if row:
+                member_id = _coalesce_row_value(row, "id")
+                if using_postgres():
+                    cur.execute(
+                        "UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                        (name, normalize_phone(phone), customer_id, member_id),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (name, normalize_phone(phone), customer_id, member_id),
+                    )
+            else:
+                if using_postgres():
+                    cur.execute(
+                        "INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id",
+                        (name, email_n, normalize_phone(phone), customer_id),
+                    )
+                    member_id = cur.fetchone()[0]
+                else:
+                    cur.execute(
+                        "INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)",
+                        (name, email_n, normalize_phone(phone), 'active', customer_id),
+                    )
+                    member_id = cur.lastrowid
+
+            if using_postgres():
+                cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
+            else:
+                cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
+            tokrow = cur.fetchone()
+            token = _coalesce_row_value(tokrow, "qr_token") if tokrow else None
+            if not token:
+                token = secrets.token_urlsafe(24)
+                if using_postgres():
+                    cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
+                else:
+                    cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+
+            con.commit()
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+        send_email(
+            customer_email,
+            "Your Atlas Gym Check-In Code",
+            (
+                f"Hi {name},\n\nYour membership is active. Open your QR code here:\n"
+                f"{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nGymSense — Your gym operations, simplified."
+            ),
+        )
+        return True
+    except Exception:
+        return True
+
 def _row_to_product(row) -> dict:
     if using_postgres():
         getter = row.get
@@ -1114,8 +1668,21 @@ def create_app():
                 if not cur.fetchone():
                     return jsonify({"ok": False, "error": "Member not found"}), 404
 
+            stripe_api_key = os.environ.get("STRIPE_API_KEY")
+            if not stripe_api_key:
+                return jsonify({"ok": False, "error": "Stripe not configured"}), 501
+            try:
+                import stripe
+            except Exception as exc:
+                return jsonify({"ok": False, "error": f"Stripe SDK not available: {exc}"}), 500
+
+            stripe.api_key = stripe_api_key
+
             prepared_items = []
             subtotal_cents = 0
+            stripe_line_items: list[dict] = []
+            has_subscription = False
+            has_one_time = False
             for idx, raw_item in enumerate(items_payload):
                 product_id = raw_item.get("product_id")
                 if not product_id:
@@ -1137,6 +1704,17 @@ def create_app():
 
                 line_total = int(price["amount_cents"] or 0) * quantity
                 subtotal_cents += line_total
+                stripe_price_id = price.get("stripe_price_id")
+                if not stripe_price_id:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: Stripe price not configured"}), 400
+
+                stripe_line_items.append({"price": stripe_price_id, "quantity": quantity})
+
+                if price.get("billing_period"):
+                    has_subscription = True
+                else:
+                    has_one_time = True
+
                 prepared_items.append(
                     {
                         "product": product,
@@ -1145,6 +1723,9 @@ def create_app():
                         "line_total": line_total,
                     }
                 )
+
+            if has_subscription and has_one_time:
+                return jsonify({"ok": False, "error": "Cannot mix subscription and one-time items in a single order"}), 400
 
             total_cents = subtotal_cents  # taxes/discounts applied later
             order_number = payload.get("order_number") or generate_order_number()
@@ -1281,6 +1862,107 @@ def create_app():
                         ),
                     )
 
+            # Build Stripe Checkout Session
+            mode = "subscription" if has_subscription else "payment"
+
+            success_url_env = os.environ.get("COMMERCE_CHECKOUT_SUCCESS_URL") or os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL")
+            cancel_url_env = os.environ.get("COMMERCE_CHECKOUT_CANCEL_URL") or os.environ.get("STRIPE_CHECKOUT_CANCEL_URL")
+            default_success = request.url_root.rstrip('/') + "/staff/checkout/success"
+            default_cancel = request.url_root.rstrip('/') + "/staff/checkout/cancel"
+            success_url = _append_session_placeholder(success_url_env or default_success, order_number)
+            cancel_url = (cancel_url_env or default_cancel).strip()
+            if "{ORDER_NUMBER}" in cancel_url:
+                cancel_url = cancel_url.replace("{ORDER_NUMBER}", order_number)
+            if cancel_url:
+                sep_cancel = '&' if '?' in cancel_url else '?'
+                if "order=" not in cancel_url:
+                    cancel_url = f"{cancel_url}{sep_cancel}order={order_number}"
+
+            customer_email = guest_email
+            if not customer_email and member_id:
+                email_query = (
+                    "SELECT email_lower FROM members WHERE id = %s"
+                    if using_postgres()
+                    else "SELECT email_lower FROM members WHERE id = ?"
+                )
+                cur.execute(email_query, (member_id,))
+                member_row = cur.fetchone()
+                if member_row:
+                    customer_email = member_row[0] if not using_postgres() else member_row.get("email_lower")
+
+            session_kwargs = {
+                "mode": mode,
+                "line_items": stripe_line_items,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": {
+                    "order_id": str(order_id),
+                    "order_number": order_number,
+                    "order_type": order_type,
+                },
+            }
+
+            if customer_email:
+                session_kwargs["customer_email"] = customer_email
+
+            metadata_payload = {
+                "order_id": str(order_id),
+                "order_number": order_number,
+                "order_type": order_type,
+            }
+
+            if mode == "payment":
+                session_kwargs["payment_intent_data"] = {"metadata": metadata_payload}
+            else:
+                session_kwargs["subscription_data"] = {"metadata": metadata_payload}
+
+            try:
+                checkout_session = stripe.checkout.Session.create(**session_kwargs)
+            except Exception as err:
+                con.rollback()
+                return jsonify({"ok": False, "error": f"Stripe checkout creation failed: {err}"}), 502
+
+            payment_intent_id = checkout_session.payment_intent if mode == "payment" else None
+            checkout_session_id = checkout_session.id
+            checkout_url = checkout_session.url
+
+            if using_postgres():
+                cur.execute(
+                    """
+                    UPDATE orders
+                    SET status = %s,
+                        checkout_session_id = %s,
+                        payment_intent_id = %s,
+                        payment_link_url = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        "awaiting_payment",
+                        checkout_session_id,
+                        payment_intent_id,
+                        checkout_url,
+                        order_id,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE orders
+                    SET status = ?,
+                        checkout_session_id = ?,
+                        payment_intent_id = ?,
+                        payment_link_url = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "awaiting_payment",
+                        checkout_session_id,
+                        payment_intent_id,
+                        checkout_url,
+                        order_id,
+                    ),
+                )
+
             con.commit()
 
             return jsonify(
@@ -1289,7 +1971,7 @@ def create_app():
                     "order": {
                         "id": order_id,
                         "order_number": order_number,
-                        "status": status,
+                        "status": "awaiting_payment",
                         "currency": currency,
                         "subtotal_cents": subtotal_cents,
                         "tax_cents": 0,
@@ -1297,6 +1979,8 @@ def create_app():
                         "tip_cents": 0,
                         "total_cents": total_cents,
                         "expires_at": expires_at_dt.isoformat(),
+                        "checkout_url": checkout_url,
+                        "checkout_session_id": checkout_session_id,
                         "items": [
                             {
                                 "product_id": item["product"]["id"],
@@ -1409,98 +2093,52 @@ def create_app():
 
     @app.post("/webhooks/stripe")
     def stripe_webhook():
-        # Verify signature and handle key subscription events
-        if not STAFF_SIGNUP_ENABLED:
+        if not (STAFF_SIGNUP_ENABLED or COMMERCE_ENABLED):
             return ("OK", 200)
+
         payload = request.get_data()
+        raw_body = payload.decode("utf-8", errors="ignore")
         sig = request.headers.get("Stripe-Signature", "")
         secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+
         try:
             import stripe
             if not secret:
-                # If not configured, acknowledge to avoid retries during scaffold
                 return ("OK", 200)
             event = stripe.Webhook.construct_event(payload, sig, secret)
         except Exception:
             return ("Bad signature", 400)
 
-        try:
-            if event and event.get("type") == "checkout.session.completed":
-                sess = event["data"]["object"]
-                stripe.api_key = os.environ.get("STRIPE_API_KEY")
-                # Retrieve full session with line items
-                session_id = sess.get("id")
-                try:
-                    sess_full = stripe.checkout.Session.retrieve(session_id, expand=["line_items", "customer", "subscription"])
-                except Exception:
-                    sess_full = sess
-                cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
-                customer_id = (cust.get("id") if cust else sess_full.get("customer"))
-                customer_email = None
-                if sess_full.get("customer_details"):
-                    customer_email = sess_full["customer_details"].get("email")
-                if not customer_email:
-                    customer_email = sess_full.get("customer_email") or (sess_full.get("metadata") or {}).get("app_member_email")
-                customer_name = (sess_full.get("metadata") or {}).get("app_member_name")
+        stripe_api_key = os.environ.get("STRIPE_API_KEY")
+        if stripe_api_key:
+            try:
+                import stripe
+                stripe.api_key = stripe_api_key
+            except Exception:
+                pass
 
-                # Extract price and subscription ids
-                price_id = None
-                if sess_full.get("line_items") and sess_full["line_items"].get("data"):
-                    li = sess_full["line_items"]["data"][0]
-                    if li.get("price"):
-                        price_id = li["price"].get("id")
-                subscription_id = sess_full.get("subscription") if isinstance(sess_full.get("subscription"), str) else (sess_full.get("subscription") or {}).get("id")
+        event_type = event.get("type", "")
+        obj = (event.get("data") or {}).get("object") or {}
+        handled = False
 
-                    # Upsert member record (tier stored on members table)
-                if customer_email:
-                    email_n = normalize_email(customer_email)
-                    name = customer_name or (cust.get("name") if cust else None) or "Member"
-                    phone = (cust.get("phone") if cust else None)
-                    con = connect_db(); cur = con.cursor()
-                    # Find existing member by email
-                    if using_postgres():
-                        cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
-                    else:
-                        cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
-                    row = cur.fetchone()
-                    if row:
-                        member_id = row[0] if isinstance(row, (list, tuple)) else (row.get("id") if isinstance(row, dict) else row[0])
-                        # Update basic fields + stripe_customer_id
-                        if using_postgres():
-                            cur.execute("UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (name, normalize_phone(phone), customer_id, member_id))
-                        else:
-                            cur.execute("UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (name, normalize_phone(phone), customer_id, member_id))
-                    else:
-                        # Insert new member
-                        if using_postgres():
-                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id", (name, email_n, normalize_phone(phone), customer_id))
-                            member_id = cur.fetchone()[0]
-                        else:
-                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)", (name, email_n, normalize_phone(phone), 'active', customer_id))
-                            member_id = cur.lastrowid
+        if COMMERCE_ENABLED:
+            if event_type == "checkout.session.completed":
+                handled = _handle_commerce_checkout_completed(obj, raw_body)
+            elif event_type == "checkout.session.expired":
+                handled = _handle_commerce_checkout_expired(obj)
+            elif event_type == "payment_intent.succeeded":
+                handled = _handle_commerce_payment_intent(obj, "succeeded", raw_body)
+            elif event_type == "payment_intent.payment_failed":
+                handled = _handle_commerce_payment_intent(obj, "failed", raw_body)
 
-                    # Ensure QR token
-                    if using_postgres():
-                        cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
-                    else:
-                        cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
-                    tokrow = cur.fetchone()
-                    token = (tokrow[0] if isinstance(tokrow, (list, tuple)) else (tokrow.get("qr_token") if tokrow else None)) if tokrow else None
-                    if not token:
-                        token = secrets.token_urlsafe(24)
-                        if using_postgres():
-                            cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
-                        else:
-                            cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+        if not handled and STAFF_SIGNUP_ENABLED and event_type == "checkout.session.completed":
+            try:
+                import stripe
+                _handle_signup_checkout_session(obj, stripe)
+            except Exception:
+                pass
 
-                    con.commit(); con.close()
-
-                    # Send QR email
-                    send_email(customer_email, "Your Atlas Gym Check-In Code", (
-                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nGymSense — Your gym operations, simplified."))
-            return ("OK", 200)
-        except Exception:
-            return ("OK", 200)
+        return ("OK", 200)
 
     # --- Signup success/cancel placeholders ---
     @app.get("/join/success")

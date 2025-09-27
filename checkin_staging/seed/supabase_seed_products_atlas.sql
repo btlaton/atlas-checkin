@@ -126,17 +126,11 @@ price_seed as (
   select * from (
     values
       ('electrolyte-drink','retail',300,'USD',true,null,null,null,null,null,null,false),
-      ('electrolyte-drink','online',300,'USD',false,null,null,null,null,null,null,false),
       ('energy-drink','retail',400,'USD',true,null,null,null,null,null,null,false),
-      ('energy-drink','online',400,'USD',false,null,null,null,null,null,null,false),
       ('atlas-essential-baby-tee-black','retail',2500,'USD',true,null,null,null,null,null,null,false),
-      ('atlas-essential-baby-tee-black','online',2500,'USD',false,null,null,null,null,null,null,false),
       ('atlas-essential-shirt-black','retail',2790,'USD',true,null,null,null,null,null,null,false),
-      ('atlas-essential-shirt-black','online',2790,'USD',false,null,null,null,null,null,null,false),
       ('towel-service','retail',500,'USD',true,null,null,null,'service',null,null,false),
-      ('towel-service','online',500,'USD',false,null,null,null,'service',null,null,false),
       ('water','retail',150,'USD',true,null,null,null,null,null,null,false),
-      ('water','online',150,'USD',false,null,null,null,null,null,null,false),
       ('personal-training-1-session','package',15000,'USD',true,null,null,1,'session',null,null,false),
       ('personal-training-4-sessions-month','recurring',60000,'USD',true,'month',1,4,'session',1,'month',false),
       ('personal-training-8-sessions-month','recurring',104000,'USD',true,'month',1,8,'session',1,'month',false),

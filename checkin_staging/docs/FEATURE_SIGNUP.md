@@ -46,9 +46,11 @@ See migration: `seed/migrations/20250914__signup_billing.sql` (future use once w
 - API keys (test): `STRIPE_API_KEY`.
 - Webhook endpoint (staging): `https://staging.gymsense.io/webhooks/stripe` → capture secret as `STRIPE_WEBHOOK_SECRET`.
 - Env
-  - `STRIPE_API_KEY`
-  - `STRIPE_WEBHOOK_SECRET`
-  - `STRIPE_PRICE_ESSENTIAL`, `STRIPE_PRICE_ELEVATED`, `STRIPE_PRICE_ELITE`
+- `STRIPE_API_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_ESSENTIAL`, `STRIPE_PRICE_ELEVATED`, `STRIPE_PRICE_ELITE`
+- `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL` *(fallback to `/join/success` + `/join/cancel` if unset)*
+- `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL` *(fallback to `/join/success` + `/join/cancel` if unset)*
   - `JOIN_SUCCESS_URL=https://staging.gymsense.io/join/success`
   - `JOIN_CANCEL_URL=https://staging.gymsense.io/join/cancel`
   - `STAFF_SIGNUP_PASSWORD=<temporary password for /staff/signup>`

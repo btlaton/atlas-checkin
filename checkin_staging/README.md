@@ -102,4 +102,5 @@ Run order (staging → prod):
   - `STRIPE_WEBHOOK_SECRET` — test webhook signing secret (whsec_...)
   - `STRIPE_PRICE_ESSENTIAL` / `STRIPE_PRICE_ELEVATED` / `STRIPE_PRICE_ELITE` — Price IDs (price_...)
   - `JOIN_SUCCESS_URL` / `JOIN_CANCEL_URL` — e.g., `https://staging.gymsense.io/join/success` and `/join/cancel`
+  - `COMMERCE_CHECKOUT_SUCCESS_URL` / `COMMERCE_CHECKOUT_CANCEL_URL` — optional overrides for staff-initiated Checkout flows (defaults point to `/staff/checkout/success|cancel`)
   - Signup & Billing: staff auth via Supabase Auth, /staff/billing KPIs, Stripe Terminal/ACH options.
