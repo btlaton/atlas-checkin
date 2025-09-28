@@ -1770,7 +1770,7 @@ def create_app():
                         metadata_pg,
                     ),
                 )
-                order_id = cur.fetchone()[0]
+                order_id = _coalesce_row_value(cur.fetchone(), "id")
             else:
                 cur.execute(
                     """
