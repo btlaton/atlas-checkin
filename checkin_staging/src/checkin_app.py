@@ -1731,7 +1731,7 @@ def create_app():
             order_number = payload.get("order_number") or generate_order_number()
             status = "pending"
 
-            metadata_pg = metadata_value if metadata_value is not None else None
+            metadata_pg = json.dumps(metadata_value) if metadata_value is not None else None
             metadata_sqlite = json.dumps(metadata_value) if metadata_value is not None else None
             expires_at_value = expires_at_dt if using_postgres() else expires_at_dt.isoformat()
 
@@ -1812,8 +1812,7 @@ def create_app():
                 price = item["price"]
                 quantity = item["quantity"]
                 line_total = item["line_total"]
-                metadata_line_pg = {"price_type": price["price_type"]}
-                metadata_line_sqlite = json.dumps(metadata_line_pg)
+                metadata_line_json = json.dumps({"price_type": price["price_type"]})
 
                 if using_postgres():
                     cur.execute(
@@ -1835,7 +1834,7 @@ def create_app():
                             0,
                             0,
                             line_total,
-                            metadata_line_pg,
+                            metadata_line_json,
                         ),
                     )
                 else:
@@ -1858,7 +1857,7 @@ def create_app():
                             0,
                             0,
                             line_total,
-                            metadata_line_sqlite,
+                            metadata_line_json,
                         ),
                     )
 
