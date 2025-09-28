@@ -536,6 +536,22 @@ def _coalesce_row_value(row, key, index=0):
     return None
 
 
+def _to_iso(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc).isoformat()
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return dt.isoformat()
+        except Exception:
+            return value
+    return str(value)
+
+
 def _update_order_status(cur, order_id: int, new_status: str, *, paid_at: datetime | None = None,
                          checkout_session_id: str | None = None, payment_intent_id: str | None = None,
                          payment_link_url: str | None = None, canceled_at: datetime | None = None):
@@ -1059,6 +1075,191 @@ def _handle_signup_checkout_session(session_obj: dict, stripe_module) -> bool:
         return True
     except Exception:
         return True
+
+
+def _serialize_order_row(row) -> dict:
+    return {
+        "id": _coalesce_row_value(row, "id"),
+        "order_number": _coalesce_row_value(row, "order_number"),
+        "status": (_coalesce_row_value(row, "status") or '').lower(),
+        "currency": (_coalesce_row_value(row, "currency") or 'USD').upper(),
+        "subtotal_cents": int(_coalesce_row_value(row, "subtotal_cents") or 0),
+        "tax_cents": int(_coalesce_row_value(row, "tax_cents") or 0),
+        "discount_cents": int(_coalesce_row_value(row, "discount_cents") or 0),
+        "tip_cents": int(_coalesce_row_value(row, "tip_cents") or 0),
+        "total_cents": int(_coalesce_row_value(row, "total_cents") or 0),
+        "notes": _coalesce_row_value(row, "notes"),
+        "checkout_session_id": _coalesce_row_value(row, "checkout_session_id"),
+        "payment_intent_id": _coalesce_row_value(row, "payment_intent_id"),
+        "payment_link_url": _coalesce_row_value(row, "payment_link_url"),
+        "expires_at": _to_iso(_coalesce_row_value(row, "expires_at")),
+        "paid_at": _to_iso(_coalesce_row_value(row, "paid_at")),
+        "canceled_at": _to_iso(_coalesce_row_value(row, "canceled_at")),
+        "created_at": _to_iso(_coalesce_row_value(row, "created_at")),
+    }
+
+
+def _fetch_order_detail(order_id: int) -> dict | None:
+    con = connect_db(); cur = con.cursor()
+    try:
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, order_number, status, currency, subtotal_cents, tax_cents, discount_cents,
+                       tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                       payment_link_url, expires_at, paid_at, canceled_at, created_at
+                  FROM orders
+                 WHERE id = %s
+                """,
+                (order_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, order_number, status, currency, subtotal_cents, tax_cents, discount_cents,
+                       tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                       payment_link_url, expires_at, paid_at, canceled_at, created_at
+                  FROM orders
+                 WHERE id = ?
+                """,
+                (order_id,),
+            )
+        row = cur.fetchone()
+        if not row:
+            return None
+        order = _serialize_order_row(row)
+
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.product_id, oi.price_id, oi.description, oi.quantity,
+                       oi.unit_amount_cents, oi.tax_cents, oi.discount_cents, oi.total_cents,
+                       p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = %s
+                 ORDER BY oi.id ASC
+                """,
+                (order_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.product_id, oi.price_id, oi.description, oi.quantity,
+                       oi.unit_amount_cents, oi.tax_cents, oi.discount_cents, oi.total_cents,
+                       p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = ?
+                 ORDER BY oi.id ASC
+                """,
+                (order_id,),
+            )
+        items = []
+        for item_row in cur.fetchall():
+            items.append({
+                "id": _coalesce_row_value(item_row, "id"),
+                "product_id": _coalesce_row_value(item_row, "product_id"),
+                "price_id": _coalesce_row_value(item_row, "price_id"),
+                "description": _coalesce_row_value(item_row, "description"),
+                "product_name": _coalesce_row_value(item_row, "name") or _coalesce_row_value(item_row, "description"),
+                "quantity": int(_coalesce_row_value(item_row, "quantity") or 0),
+                "unit_amount_cents": int(_coalesce_row_value(item_row, "unit_amount_cents") or 0),
+                "total_cents": int(_coalesce_row_value(item_row, "total_cents") or 0),
+            })
+        order["items"] = items
+        order["checkout_url"] = order.get("payment_link_url")
+        return order
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _fetch_recent_orders(limit: int = 10) -> list:
+    con = connect_db(); cur = con.cursor()
+    try:
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, order_number, status, total_cents, currency, created_at
+                  FROM orders
+                 ORDER BY created_at DESC
+                 LIMIT %s
+                """,
+                (limit,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, order_number, status, total_cents, currency, created_at
+                  FROM orders
+                 ORDER BY created_at DESC
+                 LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = cur.fetchall() or []
+        orders = []
+        order_ids = []
+        for row in rows:
+            order = {
+                "id": _coalesce_row_value(row, "id"),
+                "order_number": _coalesce_row_value(row, "order_number"),
+                "status": (_coalesce_row_value(row, "status") or '').lower(),
+                "total_cents": int(_coalesce_row_value(row, "total_cents") or 0),
+                "currency": (_coalesce_row_value(row, "currency") or 'USD').upper(),
+                "created_at": _to_iso(_coalesce_row_value(row, "created_at"))
+            }
+            orders.append(order)
+            order_ids.append(order["id"])
+        if not order_ids:
+            return orders
+
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT oi.order_id, oi.description, oi.quantity, p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = ANY(%s)
+                 ORDER BY oi.order_id, oi.id ASC
+                """,
+                (order_ids,),
+            )
+        else:
+            placeholders = ','.join('?' for _ in order_ids)
+            cur.execute(
+                f"""
+                SELECT oi.order_id, oi.description, oi.quantity, p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id IN ({placeholders})
+                 ORDER BY oi.order_id, oi.id ASC
+                """,
+                tuple(order_ids),
+            )
+        first_items = {}
+        for item_row in cur.fetchall() or []:
+            order_id = _coalesce_row_value(item_row, "order_id")
+            if order_id in first_items:
+                continue
+            label = _coalesce_row_value(item_row, "name") or _coalesce_row_value(item_row, "description")
+            qty = int(_coalesce_row_value(item_row, "quantity") or 0)
+            if label:
+                summary = f"{label} ×{qty}" if qty > 1 else label
+                first_items[order_id] = summary
+
+        for order in orders:
+            order["summary"] = first_items.get(order["id"]) or order.get("order_number")
+
+        return orders
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
 
 def _row_to_product(row) -> dict:
     if using_postgres():
@@ -1994,11 +2195,11 @@ def create_app():
                     },
                 }
             )
-        except Exception as e:
-            try:
-                import traceback
-                print("[commerce] order creation failed:", e)
-                traceback.print_exc()
+            except Exception as e:
+                try:
+                    import traceback
+                    print("[commerce] order creation failed:", e)
+                    traceback.print_exc()
             except Exception:
                 print("[commerce] order creation failed (no traceback):", e)
             try:
@@ -2011,6 +2212,48 @@ def create_app():
                 con.close()
             except Exception:
                 pass
+
+    @app.get("/api/commerce/orders/<int:order_id>")
+    def api_commerce_order_detail(order_id: int):
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        order = _fetch_order_detail(order_id)
+        if not order:
+            return jsonify({"ok": False, "error": "Order not found"}), 404
+        return jsonify({"ok": True, "order": order})
+
+    @app.get("/api/commerce/orders")
+    def api_commerce_orders_list():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        try:
+            limit = int(request.args.get("limit", "10"))
+        except Exception:
+            limit = 10
+        limit = max(1, min(limit, 25))
+        orders = _fetch_recent_orders(limit)
+        return jsonify({"ok": True, "orders": orders})
+
+    @app.get("/staff/orders/<int:order_id>/qr.png")
+    def staff_order_qr(order_id: int):
+        if not COMMERCE_ENABLED:
+            abort(404)
+        if not session.get("admin"):
+            abort(401)
+        order = _fetch_order_detail(order_id)
+        if not order:
+            abort(404)
+        checkout_url = order.get("payment_link_url")
+        if not checkout_url:
+            abort(404)
+        png_bytes = generate_qr_png(checkout_url)
+        if not png_bytes:
+            abort(500)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png", download_name="order_qr.png")
 
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
