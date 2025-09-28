@@ -2195,13 +2195,16 @@ def create_app():
                     },
                 }
             )
-            except Exception as e:
-                try:
-                    import traceback
-                    print("[commerce] order creation failed:", e)
-                    traceback.print_exc()
+        except Exception as e:
+            try:
+                import traceback
+                print("[commerce] order creation failed:", e)
+                traceback.print_exc()
             except Exception:
-                print("[commerce] order creation failed (no traceback):", e)
+                try:
+                    print("[commerce] order creation failed (no traceback):", e)
+                except Exception:
+                    pass
             try:
                 con.rollback()
             except Exception:
