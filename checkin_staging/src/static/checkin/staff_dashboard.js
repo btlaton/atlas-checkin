@@ -4,7 +4,6 @@
 
   // Quick sale elements
   const openCatalogBtn = document.getElementById('open-catalog');
-  const openRecentBtn = document.getElementById('open-recent');
   const refreshOrdersBtn = document.getElementById('refresh-orders');
   const orderList = document.getElementById('order-list');
 
@@ -326,6 +325,7 @@
           clearInterval(pollTimer);
           pollTimer = null;
         }
+        loadRecentOrders();
       }
     } catch (err) {
       console.warn('Order poll failed', err);
@@ -376,9 +376,6 @@
   });
 
   refreshOrdersBtn?.addEventListener('click', loadRecentOrders);
-  openRecentBtn?.addEventListener('click', () => {
-    document.getElementById('recent-orders')?.scrollIntoView({ behavior: 'smooth' });
-  });
 
   async function loadRecentOrders() {
     try {

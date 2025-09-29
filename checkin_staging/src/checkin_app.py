@@ -744,6 +744,20 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
             order_id = int(order_id_raw)
         except Exception:
             order_id = None
+
+    stripe_api_key = os.environ.get("STRIPE_API_KEY")
+    session_full = session_obj
+    if session_id and stripe_api_key:
+        try:
+            import stripe
+            stripe.api_key = stripe_api_key
+            session_full = stripe.checkout.Session.retrieve(
+                session_id,
+                expand=["customer", "customer_details"],
+            )
+        except Exception:
+            session_full = session_obj
+
     con = connect_db(); cur = con.cursor()
     try:
         row = None
@@ -769,23 +783,23 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
             return False
         resolved_order_id = _coalesce_row_value(row, "id")
         current_status = (_coalesce_row_value(row, "status") or "").lower()
-        payment_status = (session_obj.get("payment_status") or "").lower()
+        payment_status = (session_full.get("payment_status") or session_obj.get("payment_status") or "").lower()
         if payment_status in {"paid", "no_payment_required"}:
             new_status = "paid"
         elif payment_status == "unpaid":
             new_status = "awaiting_payment"
         else:
             new_status = current_status if current_status in {"paid", "refunded"} else "awaiting_payment"
-        payment_intent_id = session_obj.get("payment_intent")
-        checkout_url = session_obj.get("url")
+        payment_intent_id = session_full.get("payment_intent") or session_obj.get("payment_intent")
+        checkout_url = session_full.get("url") or session_obj.get("url")
         now_utc = datetime.now(timezone.utc)
 
-        customer_details = session_obj.get("customer_details") or {}
-        customer_email = customer_details.get("email") or session_obj.get("customer_email")
+        customer_details = session_full.get("customer_details") or session_obj.get("customer_details") or {}
+        customer_email = customer_details.get("email") or session_full.get("customer_email") or session_obj.get("customer_email")
         customer_name = customer_details.get("name") or metadata.get("customer_name")
         customer_phone = customer_details.get("phone")
         stripe_customer_id = None
-        cust_obj = session_obj.get("customer")
+        cust_obj = session_full.get("customer") or session_obj.get("customer")
         if isinstance(cust_obj, dict):
             stripe_customer_id = cust_obj.get("id")
         elif isinstance(cust_obj, str):
@@ -812,8 +826,8 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
             )
 
         if new_status == "paid" and payment_intent_id:
-            amount_total = session_obj.get("amount_total") or 0
-            currency = (session_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+            amount_total = session_full.get("amount_total") or session_obj.get("amount_total") or 0
+            currency = (session_full.get("currency") or session_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
             _upsert_order_payment(
                 cur,
                 resolved_order_id,
@@ -2197,6 +2211,8 @@ def create_app():
                     "order_number": order_number,
                     "order_type": order_type,
                 },
+                "client_reference_id": order_number,
+                "customer_creation": "if_required",
             }
 
             if customer_email:
@@ -2354,6 +2370,30 @@ def create_app():
         if not png_bytes:
             abort(500)
         return send_file(io.BytesIO(png_bytes), mimetype="image/png", download_name="order_qr.png")
+
+    @app.get("/staff/checkout/success")
+    def staff_checkout_success():
+        order_number = request.args.get("order")
+        return render_template(
+            "checkin/staff_checkout_status.html",
+            title="Payment successful",
+            message="Payment received. Thanks for checking in!",
+            subtext="Our team sees this instantly. You can close this window.",
+            status="success",
+            order_number=order_number,
+        )
+
+    @app.get("/staff/checkout/cancel")
+    def staff_checkout_cancel():
+        order_number = request.args.get("order")
+        return render_template(
+            "checkin/staff_checkout_status.html",
+            title="Checkout cancelled",
+            message="No charge was made. Feel free to try again if needed.",
+            subtext="If you ran into an issue, staff can start a new checkout in a few seconds.",
+            status="cancel",
+            order_number=order_number,
+        )
 
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
