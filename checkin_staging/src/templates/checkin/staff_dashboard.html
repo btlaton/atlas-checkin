@@ -26,10 +26,10 @@
           <div class="panel hero-panel">
             <div class="hero-content">
               <h1>Start a quick sale</h1>
-              <p class="muted">Pick an item, show the QR code, and let the member pay from their phone.</p>
+              <p class="muted">Select an item, show the QR code, and let the member pay from their phone.</p>
               <button class="primary-btn" id="open-catalog">New Checkout</button>
             </div>
-            <a class="ghost-link" id="view-recent-link" href="#recent-orders">Recent orders ↓</a>
+            <button class="ghost-btn" id="open-recent">Recent orders</button>
           </div>
 
           <section id="recent-orders" class="panel recent-orders">
@@ -40,15 +40,6 @@
             <ul id="order-list" class="order-list" aria-live="polite"></ul>
           </section>
 
-          <section id="catalog-section" class="panel catalog-panel">
-            <div class="panel-header">
-              <h2>Catalog</h2>
-              <div class="filters">
-                <input type="search" id="catalog-search" placeholder="Search products" autocomplete="off" />
-              </div>
-            </div>
-            <div id="catalog-groups" class="catalog-groups" aria-live="polite"></div>
-          </section>
         </section>
 
         <section id="tab-checkins" class="tab-panel" role="tabpanel" aria-labelledby="Check-In Pulse">
@@ -117,6 +108,11 @@
       <div class="sheet-backdrop"></div>
       <div class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <button class="sheet-close" id="sheet-close" aria-label="Close">×</button>
+        <div id="sheet-products-view" class="sheet-view" hidden>
+          <h2>Select an item</h2>
+          <input type="search" id="sheet-search" class="search" placeholder="Search catalog" autocomplete="off" />
+          <div id="sheet-product-groups" class="sheet-products" aria-live="polite"></div>
+        </div>
         <div id="sheet-config" class="sheet-view active">
           <h2 id="sheet-title">Checkout</h2>
           <p class="muted" id="sheet-subtitle"></p>

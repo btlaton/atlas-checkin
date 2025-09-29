@@ -59,15 +59,7 @@ body { margin: 0; font-family: "Inter", "SF Pro Display", -apple-system, BlinkMa
 .status-pill.paid { background: #dcfce7; color: #0f7a29; }
 .status-pill.failed, .status-pill.expired { background: #fee2e2; color: #b91c1c; }
 
-.catalog-panel { display: grid; gap: 18px; }
-.catalog-panel input[type="search"] { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); font-size: 15px; }
-.catalog-groups { display: grid; gap: 28px; }
-.catalog-group h3 { margin: 0 0 12px; font-size: 16px; font-weight: 700; }
-.catalog-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
-.catalog-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 18px; background: var(--surface-alt); cursor: pointer; display: grid; gap: 12px; transition: border-color 0.2s ease, transform 0.15s ease; }
-.catalog-card:hover { border-color: rgba(15,17,21,0.4); transform: translateY(-2px); }
-.catalog-card .name { font-weight: 700; font-size: 16px; }
-.catalog-card .price { font-weight: 600; font-size: 15px; }
+.catalog-panel { display: none; }
 
 .kpi-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .kpi-card { background: var(--surface); border-radius: var(--radius-md); border: 1px solid var(--border); padding: 18px; display: grid; gap: 6px; }
@@ -98,6 +90,16 @@ body { margin: 0; font-family: "Inter", "SF Pro Display", -apple-system, BlinkMa
 .sheet-body { position: relative; background: var(--surface); width: min(420px, 92vw); max-height: 90vh; border-radius: 24px; padding: 28px 24px 32px; display: grid; gap: 20px; box-shadow: var(--shadow); }
 .sheet-close { position: absolute; top: 16px; right: 16px; border: none; background: transparent; font-size: 26px; cursor: pointer; color: var(--muted); }
 .sheet-view { display: grid; gap: 18px; }
+.sheet-products { display: grid; gap: 18px; }
+#sheet-products-view .search { width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid var(--border); font-size: 15px; }
+#sheet-products-view .sheet-products { display: grid; gap: 18px; max-height: 60vh; overflow-y: auto; padding-right: 4px; }
+#sheet-products-view .sheet-group { display: grid; gap: 12px; }
+#sheet-products-view .sheet-group h3 { margin: 0; font-size: 15px; font-weight: 700; }
+#sheet-products-view .list { display: grid; gap: 12px; }
+#sheet-products-view .item { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--border); background: var(--surface-alt); cursor: pointer; transition: border-color 0.2s ease, transform 0.1s ease; }
+#sheet-products-view .item:hover { border-color: rgba(15,17,21,0.4); transform: translateY(-1px); }
+#sheet-products-view .item .name { font-weight: 600; }
+#sheet-products-view .item .price { font-weight: 600; color: var(--muted); }
 .sheet-form { display: grid; gap: 16px; }
 .field span { display: block; font-weight: 600; margin-bottom: 6px; }
 .quantity { display: inline-flex; border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
@@ -109,6 +111,11 @@ body { margin: 0; font-family: "Inter", "SF Pro Display", -apple-system, BlinkMa
 
 .session-header { display: flex; justify-content: space-between; align-items: center; }
 .status-badge { display: inline-flex; align-items: center; justify-content: center; padding: 4px 12px; border-radius: 999px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; background: #fff5e1; color: #c26b00; }
+.status-badge.awaiting_payment { background: #fff5e1; color: #c26b00; }
+.status-badge.paid { background: #dcfce7; color: #0f7a29; }
+.status-badge.failed { background: #fee2e2; color: #b91c1c; }
+.status-badge.expired { background: #fee2e2; color: #b91c1c; }
+.status-badge.refunded { background: #e0f2fe; color: #1d4ed8; }
 .session-qr { display: grid; place-items: center; }
 .session-qr img { width: 240px; height: 240px; object-fit: contain; border-radius: 16px; border: 1px solid var(--border); background: #fff; }
 .session-actions { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }

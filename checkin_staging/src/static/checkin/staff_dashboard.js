@@ -1,15 +1,18 @@
 (function(){
   const tabButtons = Array.from(document.querySelectorAll('.tab-btn'));
   const panels = Array.from(document.querySelectorAll('.tab-panel'));
-  const catalogGroups = document.getElementById('catalog-groups');
-  const catalogSearch = document.getElementById('catalog-search');
+
+  // Quick sale elements
   const openCatalogBtn = document.getElementById('open-catalog');
+  const openRecentBtn = document.getElementById('open-recent');
   const refreshOrdersBtn = document.getElementById('refresh-orders');
   const orderList = document.getElementById('order-list');
-  const viewRecentLink = document.getElementById('view-recent-link');
 
   const sheet = document.getElementById('sheet');
   const sheetClose = document.getElementById('sheet-close');
+  const sheetProductsView = document.getElementById('sheet-products-view');
+  const sheetSearch = document.getElementById('sheet-search');
+  const sheetProductGroups = document.getElementById('sheet-product-groups');
   const sheetConfig = document.getElementById('sheet-config');
   const sheetSession = document.getElementById('sheet-session');
   const sheetTitle = document.getElementById('sheet-title');
@@ -17,16 +20,18 @@
   const qtyInput = document.getElementById('qty-input');
   const qtyInc = document.getElementById('qty-inc');
   const qtyDec = document.getElementById('qty-dec');
+  const sheetTotal = document.getElementById('sheet-total');
   const sheetSubmit = document.getElementById('sheet-submit');
   const sheetError = document.getElementById('sheet-error');
-  const sheetTotal = document.getElementById('sheet-total');
-  const sessionQrImg = document.getElementById('session-qr-img');
+
   const sessionStatus = document.getElementById('session-status');
+  const sessionQrImg = document.getElementById('session-qr-img');
   const sessionDone = document.getElementById('session-done');
   const sessionShare = document.getElementById('session-share');
   const sessionOrderNumber = document.getElementById('session-order-number');
   const sessionTotal = document.getElementById('session-total');
 
+  // Metrics / check-in elements
   const metricToday = document.getElementById('metric-today');
   const metricHour = document.getElementById('metric-hour');
   const metricMembers = document.getElementById('metric-members');
@@ -41,17 +46,13 @@
   const dateFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const timeFmt = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
 
-  let catalogData = null;
-  let filteredCatalog = null;
-  const catalogIndex = new Map();
-  let activeOrder = null;
-  let pollTimer = null;
   let catalogLoaded = false;
-
+  let catalogData = [];
+  let filteredCatalog = [];
+  const catalogIndex = new Map();
   const categoryOrder = {
     beverages: 0,
     drinks: 0,
-    'beverages-drinks': 0,
     apparel: 1,
     'open-gym': 2,
     passes: 2,
@@ -61,48 +62,47 @@
     'trainer-program': 5,
   };
 
-  function showTab(id) {
+  let selectedProduct = null;
+  let activeOrder = null;
+  let pollTimer = null;
+
+  function showTab(target) {
     tabButtons.forEach(btn => {
-      const active = btn.dataset.tabTarget === id;
+      const active = btn.dataset.tabTarget === target;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     panels.forEach(panel => {
-      panel.classList.toggle('active', panel.id === `tab-${id}`);
+      panel.classList.toggle('active', panel.id === `tab-${target}`);
     });
-    if (id === 'sale' && !catalogLoaded) {
+    if (target === 'sale' && !catalogLoaded) {
       loadCatalog();
     }
   }
 
-  tabButtons.forEach(btn => {
-    btn.addEventListener('click', () => showTab(btn.dataset.tabTarget));
-  });
-
+  tabButtons.forEach(btn => btn.addEventListener('click', () => showTab(btn.dataset.tabTarget)));
   showTab('sale');
 
   async function loadCatalog() {
     try {
       const res = await fetch('/api/commerce/catalog');
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Failed to load catalog');
-      catalogData = json.products || [];
+      if (!json.ok) throw new Error(json.error || 'Unable to load catalog');
+      catalogData = (json.products || []).filter(prod => (prod.prices || []).length);
       catalogIndex.clear();
-      catalogData.forEach(item => {
-        if (item && item.id != null) catalogIndex.set(String(item.id), item);
-      });
+      catalogData.forEach(item => catalogIndex.set(String(item.id), item));
       filteredCatalog = catalogData.slice();
-      renderCatalog();
+      renderProductSheet();
       catalogLoaded = true;
       loadRecentOrders();
     } catch (err) {
-      catalogGroups.innerHTML = `<p class="muted">${(err && err.message) || 'Unable to load catalog.'}</p>`;
+      sheetProductGroups.innerHTML = `<p class="muted">${(err && err.message) || 'Unable to load catalog.'}</p>`;
     }
   }
 
-  function renderCatalog() {
-    if (!filteredCatalog || filteredCatalog.length === 0) {
-      catalogGroups.innerHTML = '<p class="muted">No products to show.</p>';
+  function renderProductSheet() {
+    if (!filteredCatalog.length) {
+      sheetProductGroups.innerHTML = '<p class="muted">No products found.</p>';
       return;
     }
     const grouped = new Map();
@@ -112,28 +112,28 @@
       grouped.get(key).push(item);
     });
     const orderedKeys = Array.from(grouped.keys()).sort((a, b) => {
-      const wA = categoryOrder[a] ?? 99;
-      const wB = categoryOrder[b] ?? 99;
-      if (wA !== wB) return wA - wB;
+      const wa = categoryOrder[a] ?? 99;
+      const wb = categoryOrder[b] ?? 99;
+      if (wa !== wb) return wa - wb;
       return a.localeCompare(b);
     });
-    const html = orderedKeys.map(key => {
-      const items = grouped.get(key);
-      items.sort((a, b) => a.name.localeCompare(b.name));
+    sheetProductGroups.innerHTML = orderedKeys.map(key => {
       const label = formatCategoryLabel(key);
-      const cards = items.map(item => `
-        <article class="catalog-card" data-product-id="${item.id}">
-          <div class="name">${escapeHtml(item.name)}</div>
-          <div class="price">${currencyFmt.format((item.prices?.[0]?.amount_cents || 0) / 100)}</div>
-        </article>
-      `).join('');
-      return `<div class="catalog-group"><h3>${label}</h3><div class="catalog-grid">${cards}</div></div>`;
+      const items = grouped.get(key).sort((a, b) => a.name.localeCompare(b.name));
+      const list = items.map(item => {
+        const price = currencyFmt.format((item.prices?.[0]?.amount_cents || 0) / 100);
+        return `<button class="item" data-product-id="${item.id}"><span class="name">${escapeHtml(item.name)}</span><span class="price">${price}</span></button>`;
+      }).join('');
+      return `<div class="sheet-group"><h3>${escapeHtml(label)}</h3><div class="list">${list}</div></div>`;
     }).join('');
-    catalogGroups.innerHTML = html;
-    Array.from(document.querySelectorAll('.catalog-card')).forEach(card => {
-      card.addEventListener('click', () => {
-        const data = catalogIndex.get(card.dataset.productId);
-        if (data) openSheetForProduct(data);
+
+    sheetProductGroups.querySelectorAll('.item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const product = catalogIndex.get(btn.dataset.productId);
+        if (product) {
+          showSheetView('config');
+          openSheetForProduct(product);
+        }
       });
     });
   }
@@ -155,42 +155,27 @@
       case 'trainer-program':
         return 'Trainer Program';
       default:
-        return key.slice(0,1).toUpperCase() + key.slice(1).replace('-', ' ');
+        return key.charAt(0).toUpperCase() + key.slice(1).replace('-', ' ');
     }
   }
 
-  catalogSearch?.addEventListener('input', () => {
-    const term = catalogSearch.value.trim().toLowerCase();
-    if (!catalogData) return;
-    if (!term) {
-      filteredCatalog = catalogData.slice();
-    } else {
-      filteredCatalog = catalogData.filter(item => {
-        return (item.name || '').toLowerCase().includes(term);
-      });
-    }
-    renderCatalog();
-  });
+  function showSheetView(view) {
+    const views = [sheetProductsView, sheetConfig, sheetSession];
+    views.forEach(v => {
+      if (!v) return;
+      if ((view === 'products' && v === sheetProductsView) ||
+          (view === 'config' && v === sheetConfig) ||
+          (view === 'session' && v === sheetSession)) {
+        v.removeAttribute('hidden');
+        if (v.classList.contains('sheet-view')) v.classList.add('active');
+      } else {
+        v.setAttribute('hidden', '');
+        if (v.classList.contains('sheet-view')) v.classList.remove('active');
+      }
+    });
+  }
 
-  openCatalogBtn?.addEventListener('click', () => {
-    const firstCard = document.querySelector('.catalog-card');
-    if (firstCard) {
-      const data = catalogIndex.get(firstCard.dataset.productId);
-      if (data) openSheetForProduct(data);
-    } else {
-      loadCatalog();
-    }
-  });
-
-  function openSheetForProduct(product) {
-    if (!product) return;
-    selectedProduct = product;
-    qtyInput.value = '1';
-    activeOrder = null;
-    updateSheetTotals();
-    sheetTitle.textContent = product.name;
-    sheetSubtitle.textContent = currencyFmt.format((product.prices?.[0]?.amount_cents || 0) / 100);
-    showSheetView('config');
+  function openSheet() {
     sheet.removeAttribute('hidden');
     document.body.style.overflow = 'hidden';
   }
@@ -198,35 +183,87 @@
   function closeSheet() {
     sheet.setAttribute('hidden', '');
     document.body.style.overflow = '';
+    selectedProduct = null;
+    activeOrder = null;
+    sheetError.textContent = '';
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    if (catalogLoaded && sheetSearch) {
+      sheetSearch.value = '';
+      filteredCatalog = catalogData.slice();
+      renderProductSheet();
+    }
+    if (sessionShare) {
+      sessionShare.disabled = false;
+      sessionShare.style.display = '';
+      sessionShare.textContent = 'Share Link';
+    }
+    if (sessionQrImg) {
+      sessionQrImg.src = '';
+    }
   }
 
   sheetClose?.addEventListener('click', closeSheet);
-  sheet?.addEventListener('click', e => {
-    if (e.target === sheet) closeSheet();
+  sheet?.addEventListener('click', evt => {
+    if (evt.target === sheet) closeSheet();
   });
 
-  let selectedProduct = null;
+  openCatalogBtn?.addEventListener('click', () => {
+    if (!catalogLoaded) {
+      sheetProductGroups.innerHTML = '<p class="muted">Loading catalog…</p>';
+      showSheetView('products');
+      openSheet();
+      if (sheetSearch) sheetSearch.value = '';
+      loadCatalog().then(() => {
+        sheetSearch?.focus({ preventScroll: true });
+      });
+    } else {
+      filteredCatalog = catalogData.slice();
+      renderProductSheet();
+      sheetSearch.value = '';
+      showSheetView('products');
+      openSheet();
+      sheetSearch?.focus({ preventScroll: true });
+    }
+  });
+
+  sheetSearch?.addEventListener('input', () => {
+    const term = sheetSearch.value.trim().toLowerCase();
+    if (!term) {
+      filteredCatalog = catalogData.slice();
+    } else {
+      filteredCatalog = catalogData.filter(item => (item.name || '').toLowerCase().includes(term));
+    }
+    renderProductSheet();
+  });
+
+  function openSheetForProduct(product) {
+    selectedProduct = product;
+    qtyInput.value = '1';
+    sheetTitle.textContent = product.name;
+    const unitPrice = product.prices?.[0]?.amount_cents || 0;
+    sheetSubtitle.textContent = `${currencyFmt.format(unitPrice / 100)} • ${formatCategoryLabel(product.product_kind || 'item')}`;
+    updateSheetTotals();
+    sheetError.textContent = '';
+  }
 
   function updateSheetTotals() {
     if (!selectedProduct) return;
     const qty = Math.max(1, parseInt(qtyInput.value, 10) || 1);
-    const priceCents = selectedProduct.prices?.[0]?.amount_cents || 0;
-    sheetTotal.textContent = currencyFmt.format((priceCents * qty) / 100);
-    sheetSubtitle.textContent = `${currencyFmt.format(priceCents / 100)} • ${selectedProduct.product_kind?.replace('-', ' ') || 'item'}`;
+    const unit = selectedProduct.prices?.[0]?.amount_cents || 0;
+    sheetTotal.textContent = currencyFmt.format((unit * qty) / 100);
   }
 
   qtyDec?.addEventListener('click', () => {
-    const val = Math.max(1, (parseInt(qtyInput.value, 10) || 1) - 1);
-    qtyInput.value = String(val);
+    const next = Math.max(1, (parseInt(qtyInput.value, 10) || 1) - 1);
+    qtyInput.value = String(next);
     updateSheetTotals();
   });
   qtyInc?.addEventListener('click', () => {
-    const val = Math.max(1, (parseInt(qtyInput.value, 10) || 1) + 1);
-    qtyInput.value = String(val);
+    const next = Math.max(1, (parseInt(qtyInput.value, 10) || 1) + 1);
+    qtyInput.value = String(next);
     updateSheetTotals();
   });
   qtyInput?.addEventListener('input', updateSheetTotals);
@@ -259,7 +296,14 @@
       const json = await res.json();
       if (!json.ok) throw new Error(json.error || 'Failed to create order');
       activeOrder = json.order;
-      showCheckoutSession();
+      showSheetView('session');
+      updateSessionView(activeOrder);
+      if (activeOrder.checkout_url) {
+        sessionQrImg.src = `/staff/orders/${activeOrder.id}/qr.png?${Date.now()}`;
+      }
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => pollOrderStatus(activeOrder.id), 5000);
+      pollOrderStatus(activeOrder.id);
       loadRecentOrders();
     } catch (err) {
       sheetError.textContent = err.message || 'Unable to create order.';
@@ -269,31 +313,6 @@
     }
   });
 
-  function showSheetView(view) {
-    if (view === 'config') {
-      sheetConfig.removeAttribute('hidden');
-      sheetConfig.classList.add('active');
-      sheetSession.setAttribute('hidden', '');
-      sheetSession.classList.remove('active');
-    } else {
-      sheetSession.removeAttribute('hidden');
-      sheetSession.classList.add('active');
-      sheetConfig.setAttribute('hidden', '');
-      sheetConfig.classList.remove('active');
-    }
-  }
-
-  function showCheckoutSession() {
-    if (!activeOrder) return;
-    showSheetView('session');
-    updateSessionView(activeOrder);
-    const qrUrl = `/staff/orders/${activeOrder.id}/qr.png?${Date.now()}`;
-    sessionQrImg.src = qrUrl;
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(() => pollOrderStatus(activeOrder.id), 5000);
-    pollOrderStatus(activeOrder.id);
-  }
-
   async function pollOrderStatus(orderId) {
     try {
       const res = await fetch(`/api/commerce/orders/${orderId}`);
@@ -301,27 +320,31 @@
       if (!json.ok) return;
       activeOrder = json.order;
       updateSessionView(activeOrder);
-      if (json.order.status === 'paid' || json.order.status === 'failed' || json.order.status === 'expired' || json.order.status === 'refunded') {
+      const terminal = ['paid', 'failed', 'expired', 'refunded'];
+      if (terminal.includes((activeOrder.status || '').toLowerCase())) {
         if (pollTimer) {
           clearInterval(pollTimer);
           pollTimer = null;
         }
       }
     } catch (err) {
-      console.warn('Failed to poll order', err);
+      console.warn('Order poll failed', err);
     }
   }
 
   function updateSessionView(order) {
-    const status = order.status || 'awaiting_payment';
+    const status = (order.status || '').toLowerCase();
     sessionStatus.textContent = statusLabel(status);
     sessionStatus.className = `status-badge ${status}`;
     sessionOrderNumber.textContent = `Order ${order.order_number}`;
     sessionTotal.textContent = `Total ${currencyFmt.format((order.total_cents || 0) / 100)}`;
+    const hasUrl = Boolean(order.checkout_url);
+    sessionShare.disabled = !hasUrl;
+    sessionShare.style.display = hasUrl ? '' : 'none';
   }
 
   function statusLabel(status) {
-    switch ((status || '').toLowerCase()) {
+    switch (status) {
       case 'paid': return 'Paid';
       case 'failed': return 'Payment failed';
       case 'expired': return 'Expired';
@@ -330,14 +353,11 @@
     }
   }
 
-  sessionDone?.addEventListener('click', () => {
-    closeSheet();
-  });
+  sessionDone?.addEventListener('click', closeSheet);
 
   sessionShare?.addEventListener('click', async () => {
-    if (!activeOrder) return;
+    if (!activeOrder || !activeOrder.checkout_url) return;
     const url = activeOrder.checkout_url;
-    if (!url) return;
     if (navigator.share) {
       try {
         await navigator.share({ title: 'Atlas Gym Checkout', url });
@@ -355,33 +375,39 @@
     }
   });
 
+  refreshOrdersBtn?.addEventListener('click', loadRecentOrders);
+  openRecentBtn?.addEventListener('click', () => {
+    document.getElementById('recent-orders')?.scrollIntoView({ behavior: 'smooth' });
+  });
+
   async function loadRecentOrders() {
     try {
-      const res = await fetch('/api/commerce/orders?limit=5');
+      const res = await fetch('/api/commerce/orders?limit=10');
       const json = await res.json();
-      if (!json.ok) throw new Error(json.error || 'Failed');
+      if (!json.ok) throw new Error(json.error || 'Unable to load recent orders');
       renderRecentOrders(json.orders || []);
     } catch (err) {
       orderList.innerHTML = `<li class="muted">${err.message || 'Unable to load recent orders.'}</li>`;
     }
   }
 
-  refreshOrdersBtn?.addEventListener('click', loadRecentOrders);
-
   function renderRecentOrders(orders) {
-    if (!orders.length) {
-      orderList.innerHTML = '<li class="muted">No orders yet</li>';
+    const visible = (orders || []).filter(o => (o.status || '').toLowerCase() !== 'awaiting_payment');
+    if (!visible.length) {
+      orderList.innerHTML = '<li class="muted">No completed orders yet</li>';
       return;
     }
-    orderList.innerHTML = orders.map(order => {
-      const created = order.created_at ? formatRelative(order.created_at) : '';
+    orderList.innerHTML = visible.map(order => {
+      const when = order.created_at ? formatRelative(order.created_at) : '';
+      const guest = order.guest_name || order.guest_email;
       return `
         <li class="order-card">
           <div class="title">${escapeHtml(order.summary || order.order_number)}</div>
           <div class="row">
             <span class="status-pill ${order.status}">${statusLabel(order.status)}</span>
             <span>${currencyFmt.format((order.total_cents || 0) / 100)}</span>
-            <span>${escapeHtml(created)}</span>
+            ${guest ? `<span>${escapeHtml(guest)}</span>` : ''}
+            <span>${escapeHtml(when)}</span>
           </div>
         </li>
       `;
@@ -389,15 +415,15 @@
   }
 
   function formatRelative(ts) {
-    const date = parseTs(ts);
+    const date = parseTimestamp(ts);
     if (!date) return ts;
     const now = new Date();
-    const diff = now - date;
-    const mins = Math.round(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins} min ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours} hr ago`;
+    const diffMs = now - date;
+    const diffMin = Math.round(diffMs / 60000);
+    if (diffMin < 1) return 'Just now';
+    if (diffMin < 60) return `${diffMin} min ago`;
+    const diffHr = Math.round(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hr ago`;
     return dateFmt.format(date);
   }
 
@@ -405,15 +431,17 @@
     return String(str || '').replace(/[&<>]/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[s]));
   }
 
-  function parseTs(ts) {
+  function parseTimestamp(ts) {
     if (!ts) return null;
-    const normalized = String(ts).replace(' ', 'T');
-    const date = new Date(normalized);
-    if (!isNaN(date.getTime())) return date;
+    try {
+      const normalized = String(ts).replace(' ', 'T');
+      const date = new Date(normalized);
+      if (!isNaN(date.getTime())) return date;
+    } catch {}
     return null;
   }
 
-  // Metrics / Check-in section
+  // Check-in metrics
   async function loadMetrics() {
     if (!metricToday) return;
     try {
@@ -499,10 +527,4 @@
   loadMetrics();
   setInterval(loadMetrics, 60000);
   window.addEventListener('gymsense:checkin', loadMetrics);
-
-  viewRecentLink?.addEventListener('click', evt => {
-    evt.preventDefault();
-    document.getElementById('recent-orders')?.scrollIntoView({ behavior: 'smooth' });
-  });
-
 })();
