@@ -846,6 +846,7 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
 
         member_id_for_order = None
         email_normalized = normalize_email(customer_email)
+        guest_name_value = customer_name.strip() if customer_name and customer_name.strip() else None
         if email_normalized:
             if using_postgres():
                 cur.execute("SELECT id, stripe_customer_id, name FROM members WHERE email_lower = %s LIMIT 1", (email_normalized,))
@@ -875,6 +876,7 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
                             cur.execute("UPDATE members SET phone_e164 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (phone_norm, member_id_for_order))
             else:
                 default_name = (customer_name or email_normalized.split('@')[0].replace('.', ' ').title() or 'Guest').strip()
+                guest_name_value = guest_name_value or default_name
                 phone_norm = normalize_phone(customer_phone)
                 qr_token = secrets.token_urlsafe(24)
                 if using_postgres():
@@ -897,12 +899,11 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
                     )
                     member_id_for_order = cur.lastrowid
 
-        # Update order guest fields
         update_fields = []
         params = []
-        if customer_name:
+        if guest_name_value:
             update_fields.append("guest_name = {}".format('%s' if using_postgres() else '?'))
-            params.append(customer_name.strip())
+            params.append(guest_name_value)
         if email_normalized:
             update_fields.append("guest_email = {}".format('%s' if using_postgres() else '?'))
             params.append(email_normalized)
@@ -1363,7 +1364,12 @@ def _fetch_recent_orders(limit: int = 10) -> list:
                 first_items[order_id] = summary
 
         for order in orders:
-            order["summary"] = first_items.get(order["id"]) or order.get("order_number")
+            summary = first_items.get(order["id"]) or order.get("order_number")
+            guest = order.get("guest_name") or order.get("guest_email")
+            if guest:
+                order["summary"] = guest
+            else:
+                order["summary"] = summary
 
         return orders
     finally:
@@ -2212,7 +2218,7 @@ def create_app():
                     "order_type": order_type,
                 },
                 "client_reference_id": order_number,
-                "customer_creation": "if_required",
+                "customer_creation": "always",
             }
 
             if customer_email:
@@ -2377,7 +2383,7 @@ def create_app():
         return render_template(
             "checkin/staff_checkout_status.html",
             title="Payment successful",
-            message="Payment received. Thanks for checking in!",
+            message="Payment received. Thank you!",
             subtext="Our team sees this instantly. You can close this window.",
             status="success",
             order_number=order_number,
