@@ -3,11 +3,11 @@
 Use this list to track the final work needed before enabling the Atlas Check-In kiosk for all members. Items are grouped to make owner assignment easier. Mark each item as you complete it.
 
 ## 1. Functional Testing (Staging)
-- [ ] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
-- [ ] Kiosk QR scan flow (camera + fallback) verified
-- [ ] Email-based QR resend flow (enter email, confirm message + delivery)
-- [ ] Admin PIN login, dashboard load, and recent check-in listing
-- [ ] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
+- [1] Camera scan on kiosk (`/kiosk`) with supported iPad (front camera, BarcodeDetector + jsQR fallback)
+- [1] Kiosk QR scan flow (camera + fallback) verified
+- [1] Email-based QR resend flow (enter email, confirm message + delivery)
+- [1] Admin PIN login, dashboard load, and recent check-in listing
+- [1] Staff dashboard metrics API (`/api/staff/metrics`) populates 10 recent entries and 7-day trend
 - [ ] CSV import preview (`/admin/members/import/preview`) on latest Mindbody export
 - [ ] Member detail view with visit history and resend button
 - [ ] Health check `/healthz` returning 200 under load

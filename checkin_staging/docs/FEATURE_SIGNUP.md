@@ -1,6 +1,6 @@
 # Member Sign‑Up & Billing (Staff‑Assisted MVP)
 
-Scope: Staff-assisted onboarding in-gym on the iPad (no self-service yet). Uses Stripe Checkout for subscriptions; no card data handled by us. On success, create/update the member + active membership in Supabase and send the QR email.
+Scope: Staff-assisted onboarding in-gym on the iPad (no self-service yet). Uses Stripe Checkout for subscriptions; no card data handled by us. On success, create/update the member record (including tier) in Supabase and send the QR email.
 
 > **Feature Flag** — All signup/billing routes are gated behind `ENABLE_STAFF_SIGNUP=1`. Leave the flag at `0` for GA-focused builds and enable it only in dedicated signup testing environments.
 
@@ -14,7 +14,7 @@ Scope: Staff-assisted onboarding in-gym on the iPad (no self-service yet). Uses 
 1) Staff‑assisted (iPad/phone)
    - Staff logs in (staff auth) → opens `/staff/signup` → selects tier → enters name/email/phone → “Start Checkout”.
    - App creates a Stripe Checkout Session and opens Stripe payment page.
-   - On success → Stripe webhook → upsert `members` + `memberships` → send QR email → auto‑redirect to success page.
+  - On success → Stripe webhook → upsert `members` (including `membership_tier`) → send QR email → auto-redirect to success page.
 
 2) Post‑success Communications
    - Email with “Open My QR Code” button and brief kiosk instructions; fallback token included.
@@ -22,20 +22,16 @@ Scope: Staff-assisted onboarding in-gym on the iPad (no self-service yet). Uses 
 ## Data Model (deltas)
 - `members`
   - `stripe_customer_id text`
-- `memberships`
-  - `provider text default 'stripe'`
-  - `stripe_subscription_id text`
-  - `price_id text`
-  - `status text` remains (active/inactive)
+  - `membership_tier text`
 
-See migration: `seed/migrations/20250914__signup_billing.sql`.
+See migration: `seed/migrations/20250914__signup_billing.sql` (future use once we reintroduce richer membership tracking).
 
 ## API & Routes (planned)
 - Status (Sep 2025 — staging): Scaffold implemented.
   - Staff password gate is live (env `STAFF_SIGNUP_PASSWORD`).
   - Staff signup form is live at `/staff/signup` (after `/staff/signup/login`).
   - Checkout Session creation is live: `POST /api/signup/checkout_session`.
-  - Webhook endpoint is live: `POST /webhooks/stripe` — writes member + membership and sends QR on `checkout.session.completed`.
+  - Webhook endpoint is live: `POST /webhooks/stripe` — writes member details (including tier) and sends QR on `checkout.session.completed`.
   - Success/cancel placeholders are live: `/join/success` and `/join/cancel` (configure via `JOIN_SUCCESS_URL`, `JOIN_CANCEL_URL`).
 
 - UI
@@ -50,9 +46,11 @@ See migration: `seed/migrations/20250914__signup_billing.sql`.
 - API keys (test): `STRIPE_API_KEY`.
 - Webhook endpoint (staging): `https://staging.gymsense.io/webhooks/stripe` → capture secret as `STRIPE_WEBHOOK_SECRET`.
 - Env
-  - `STRIPE_API_KEY`
-  - `STRIPE_WEBHOOK_SECRET`
-  - `STRIPE_PRICE_ESSENTIAL`, `STRIPE_PRICE_ELEVATED`, `STRIPE_PRICE_ELITE`
+- `STRIPE_API_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_PRICE_ESSENTIAL`, `STRIPE_PRICE_ELEVATED`, `STRIPE_PRICE_ELITE`
+- `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL` *(fallback to `/join/success` + `/join/cancel` if unset)*
+- `STRIPE_CHECKOUT_SUCCESS_URL`, `STRIPE_CHECKOUT_CANCEL_URL` *(fallback to `/join/success` + `/join/cancel` if unset)*
   - `JOIN_SUCCESS_URL=https://staging.gymsense.io/join/success`
   - `JOIN_CANCEL_URL=https://staging.gymsense.io/join/cancel`
   - `STAFF_SIGNUP_PASSWORD=<temporary password for /staff/signup>`
@@ -66,7 +64,7 @@ Why Supabase Auth
 
 ## Multi‑tenant Considerations (later)
 - Add `organizations` table and map `host -> org_id` (e.g., `atlas.gymsense.io`).
-- Keep a single Supabase project initially; use `org_id` FK on `members`, `memberships`, `check_ins` if/when needed.
+- Keep a single Supabase project initially; use `org_id` FK on `members` / `check_ins` if/when needed.
 - Later options: per‑tenant projects vs. single project + RLS by `org_id`.
 
 ## Costs (est.)

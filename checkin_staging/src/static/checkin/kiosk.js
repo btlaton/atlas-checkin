@@ -254,7 +254,13 @@
         if (aimHint) aimHint.classList.add('hidden');
         const r = await fetch('/api/checkin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ qr_token: raw }) });
         const j = await r.json();
-        if (j.ok) { showSuccess(j.member_name || 'Member'); } else { emailResult.textContent = j.error || 'Check-in failed'; }
+        if (j.ok) {
+          showSuccess(j.member_name || 'Member');
+          loadStatus();
+          window.dispatchEvent(new CustomEvent('gymsense:checkin', { detail: { member: j.member_name || 'Member' } }));
+        } else {
+          emailResult.textContent = j.error || 'Check-in failed';
+        }
         return;
       }
       // Update debug dims while scanning

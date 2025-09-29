@@ -1,4 +1,4 @@
--- Supabase schema setup for Atlas Check-In (memberships, helpers, view)
+-- Supabase schema setup for Atlas Check-In (helpers + seed)
 -- Plus a small test seed to validate the app end-to-end
 --
 -- Run this in Supabase SQL Editor (staging first, then prod).
@@ -19,27 +19,10 @@ create trigger trg_members_updated_at
 before update on public.members
 for each row execute procedure public.set_updated_at();
 
--- 2) Normalized memberships table (Mindbody tiers)
-create table if not exists public.memberships (
-  id           serial primary key,
-  member_id    integer not null references public.members(id) on delete cascade,
-  provider     text    not null default 'mindbody',
-  tier         text    not null check (tier in ('essential','elevated','elite')),
-  status       text    not null default 'active' check (status in ('active','inactive')),
-  start_date   date,
-  end_date     date,
-  last_seen_at timestamptz default now(),
-  created_at   timestamptz default now()
-);
+alter table public.members
+  add column if not exists membership_tier text;
 
--- One membership row per (member, provider). Status field indicates active vs inactive.
-create unique index if not exists ux_memberships_member_provider
-  on public.memberships(member_id, provider);
-
--- Helpful lookup
-create index if not exists ix_memberships_member_status on public.memberships(member_id, status);
-
--- 3) Phone normalization helper (US-centric)
+-- 2) Phone normalization helper (US-centric)
 create or replace function public.e164_us(phone text) returns text
 language plpgsql immutable as $$
 declare d text;
@@ -57,18 +40,7 @@ language sql volatile as $$
   select regexp_replace(translate(encode(gen_random_bytes(n_bytes),'base64'), '+/', '-_'), '=+$', '')
 $$;
 
--- 5) View: gym members (members joined to active Mindbody membership)
-create or replace view public.active_gym_members as
-select
-  m.*,
-  ms.tier as membership_tier_normalized
-from public.members m
-join public.memberships ms
-  on ms.member_id = m.id
- where ms.provider = 'mindbody'
-   and ms.status = 'active';
-
--- 6) Helpful indexes for admin/kiosk
+-- 5) Helpful indexes for admin/kiosk
 create index if not exists idx_members_email on public.members(email_lower);
 create index if not exists idx_members_phone on public.members(phone_e164);
 create index if not exists idx_checkins_member_time on public.check_ins(member_id, timestamp);
@@ -108,19 +80,13 @@ ensure_tokens as (
   update public.members m
      set qr_token = public.gen_token_urlsafe(18)
    where m.qr_token is null
-  returning m.id
 )
-insert into public.memberships (member_id, provider, tier, status, start_date, last_seen_at)
-select m.id, 'mindbody', s.tier, 'active', current_date, now()
-from upsert_members m
-join seed s on s.external_id = m.external_id
-on conflict (member_id, provider) do update
-  set tier         = excluded.tier,
-      status       = 'active',
-      start_date   = coalesce(public.memberships.start_date, excluded.start_date),
-      last_seen_at = now();
+update public.members m
+set membership_tier = s.tier
+from upsert_members um
+join seed s on s.external_id = um.external_id
+where m.id = um.id;
 
 -- Verification samples (optional)
 -- select count(*) from public.members;
--- select tier, count(*) from public.memberships where status='active' group by 1 order by 1;
--- select * from public.active_gym_members order by name limit 10;
+-- select membership_tier, count(*) from public.members group by 1 order by 1;

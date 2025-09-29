@@ -8,69 +8,149 @@
   </head>
   <body class="staff-body">
     <div class="staff-shell">
-      <header class="staff-header">
-        <div class="brand">
-          <div class="brand-title">The Atlas Gym</div>
-          <p class="brand-tagline">23282 Del Lago Dr, Laguna Hills, CA 92653</p>
-        </div>
-        <nav class="staff-nav">
-          <a href="/admin/members" class="nav-link">Members Directory</a>
-          <a href="/admin/logout" class="nav-link">Sign out</a>
+      <header class="topbar">
+        <div class="topbar-title">The Atlas Gym</div>
+        <nav class="topbar-actions">
+          <a href="/admin/logout" class="link">Sign out</a>
         </nav>
       </header>
 
-      <main class="staff-main">
-        <section class="panel kpi-grid">
-          <article class="kpi-card">
-            <h2>Today</h2>
-            <p id="metric-today" class="kpi-value">—</p>
-            <span class="kpi-label">Check-ins</span>
-          </article>
-          <article class="kpi-card">
-            <h2>Last 60 Minutes</h2>
-            <p id="metric-hour" class="kpi-value">—</p>
-            <span class="kpi-label">Recent activity</span>
-          </article>
-          <article class="kpi-card">
-            <h2>Members Today</h2>
-            <p id="metric-members" class="kpi-value">—</p>
-            <span class="kpi-label">Unique members checked in</span>
-          </article>
+      <nav class="staff-tabs" role="tablist">
+        <button class="tab-btn active" data-tab-target="sale" role="tab" aria-selected="true">Quick Sale</button>
+        <button class="tab-btn" data-tab-target="checkins" role="tab" aria-selected="false">Check-In Pulse</button>
+        <button class="tab-btn" data-tab-target="members" role="tab" aria-selected="false">Member Lookup</button>
+      </nav>
+
+      <main class="tab-panels">
+        <section id="tab-sale" class="tab-panel active" role="tabpanel" aria-labelledby="Quick Sale">
+          <div class="panel hero-panel">
+            <div class="hero-content">
+              <h1>Start a quick sale</h1>
+              <p class="muted">Select an item, show the QR code, and let the member pay from their phone.</p>
+              <button class="primary-btn" id="open-catalog">New Checkout</button>
+            </div>
+          </div>
+
+          <section id="recent-orders" class="panel recent-orders">
+            <div class="panel-header">
+              <h2>Recent orders</h2>
+              <button class="ghost-btn" id="refresh-orders">Refresh</button>
+            </div>
+            <ul id="order-list" class="order-list" aria-live="polite"></ul>
+          </section>
+
         </section>
 
-        <section class="panel trend-panel">
-          <div class="panel-header">
-            <h2>Check-ins • Last 7 Days</h2>
-            <span id="trend-caption" class="muted"></span>
-          </div>
-          <div id="trend-bars" class="trend-bars" aria-live="polite"></div>
+        <section id="tab-checkins" class="tab-panel" role="tabpanel" aria-labelledby="Check-In Pulse">
+          <section class="panel kpi-grid">
+            <article class="kpi-card">
+              <p class="kpi-label">Today</p>
+              <p id="metric-today" class="kpi-value">—</p>
+              <span class="muted">Check-ins</span>
+            </article>
+            <article class="kpi-card">
+              <p class="kpi-label">Last 60 Minutes</p>
+              <p id="metric-hour" class="kpi-value">—</p>
+              <span class="muted">Recent activity</span>
+            </article>
+            <article class="kpi-card">
+              <p class="kpi-label">Members Today</p>
+              <p id="metric-members" class="kpi-value">—</p>
+              <span class="muted">Unique check-ins</span>
+            </article>
+          </section>
+
+          <section class="panel trend-panel">
+            <div class="panel-header">
+              <h2>Check-ins • Last 7 Days</h2>
+              <span id="trend-caption" class="muted"></span>
+            </div>
+            <div id="trend-bars" class="trend-bars" aria-live="polite"></div>
+          </section>
+
+          <section class="panel action-panel">
+            <h2>Resend QR Code</h2>
+            <p class="muted">Enter the member email on file, we’ll send their QR instantly.</p>
+            <div class="action-row">
+              <input id="qa-contact" type="email" placeholder="name@example.com" autocomplete="email" />
+              <button id="qa-send" class="primary-btn">Send QR Email</button>
+            </div>
+            <div id="qa-result" class="result" role="status" aria-live="polite"></div>
+          </section>
+
+          <section class="panel recent-panel">
+            <div class="panel-header">
+              <h2>Recent Check-ins</h2>
+              <span class="muted">Most recent 10 check-ins</span>
+            </div>
+            <ul id="recent" class="recent-list" aria-live="polite"></ul>
+          </section>
         </section>
 
-        <section class="panel action-panel">
-          <h2>Resend QR Code</h2>
-          <p class="muted">Email the member their QR instantly. Use the email on file.</p>
-          <div class="action-row">
-            <input id="qa-contact" type="email" placeholder="name@example.com" autocomplete="email" />
-            <button id="qa-send" class="primary-btn">Send QR Email</button>
-          </div>
-          <div id="qa-result" class="result" role="status" aria-live="polite"></div>
-          <div class="action-links">
-            <a href="/admin/members" class="link">Open full members directory →</a>
-          </div>
-        </section>
-
-        <section class="panel recent-panel">
-          <div class="panel-header">
-            <h2>Recent Check-ins</h2>
-            <span class="muted">Most recent 10 check-ins</span>
-          </div>
-          <ul id="recent" class="recent-list" aria-live="polite"></ul>
+        <section id="tab-members" class="tab-panel" role="tabpanel" aria-labelledby="Member Lookup">
+          <section class="panel hero-panel">
+            <div class="hero-content">
+              <h1>Find any member fast</h1>
+              <p class="muted">Search, resend QR codes, and view visit history in the directory.</p>
+              <a class="primary-btn" href="/admin/members">Open Members Directory</a>
+            </div>
+          </section>
         </section>
       </main>
 
       <footer class="staff-footer">
-        <span>© {{ datetime.utcnow().year }} GymSense — Radical simplicity. Transparent affordability.</span>
+        <span>© {{ datetime.utcnow().year }} GymSense — Your gym operations, simplified.</span>
       </footer>
+    </div>
+
+    <div id="sheet" class="sheet" hidden>
+      <div class="sheet-backdrop"></div>
+      <div class="sheet-body" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <button class="sheet-close" id="sheet-close" aria-label="Close">×</button>
+        <div id="sheet-products-view" class="sheet-view" hidden>
+          <h2>Select an item</h2>
+          <input type="search" id="sheet-search" class="search" placeholder="Search catalog" autocomplete="off" />
+          <div id="sheet-product-groups" class="sheet-products" aria-live="polite"></div>
+        </div>
+        <div id="sheet-config" class="sheet-view active">
+          <h2 id="sheet-title">Checkout</h2>
+          <p class="muted" id="sheet-subtitle"></p>
+          <div class="sheet-form">
+            <label class="field">
+              <span>Quantity</span>
+              <div class="quantity">
+                <button type="button" id="qty-dec" aria-label="Decrease quantity">−</button>
+                <input id="qty-input" type="number" min="1" value="1" />
+                <button type="button" id="qty-inc" aria-label="Increase quantity">+</button>
+              </div>
+            </label>
+          </div>
+          <div class="sheet-summary">
+            <span class="muted">Total</span>
+            <strong id="sheet-total">$0.00</strong>
+          </div>
+          <button class="primary-btn" id="sheet-submit">Generate Payment Link</button>
+          <div id="sheet-error" class="sheet-error" role="alert"></div>
+        </div>
+
+        <div id="sheet-session" class="sheet-view" hidden>
+          <div class="session-header">
+            <h2>Share with member</h2>
+            <span class="status-badge" id="session-status">Awaiting payment</span>
+          </div>
+          <div class="session-qr">
+            <img id="session-qr-img" alt="QR code for member payment" />
+          </div>
+          <div class="session-actions">
+            <button class="primary-btn" id="session-done">Done</button>
+            <button class="ghost-btn" id="session-share">Share Link</button>
+          </div>
+          <div class="session-meta">
+            <p id="session-order-number" class="muted"></p>
+            <p id="session-total" class="muted"></p>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script src="/static/checkin/staff_dashboard.js" defer></script>

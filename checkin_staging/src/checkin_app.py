@@ -6,6 +6,7 @@ import hmac
 import secrets
 import smtplib
 import io
+import json
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
@@ -16,6 +17,7 @@ import socket
 
 # Optional Postgres (Supabase) support via psycopg
 DATABASE_URL = os.environ.get("DATABASE_URL")
+ALLOW_SQLITE_FALLBACK = os.environ.get("CHECKIN_ALLOW_SQLITE", "0").strip().lower() in {"1", "true", "yes", "on"}
 _PG_AVAILABLE = False
 try:
     if DATABASE_URL:
@@ -56,10 +58,19 @@ SESSION_SECRET = os.environ.get("CHECKIN_SESSION_SECRET", "dev-secret-change-me"
 STAFF_SIGNUP_PASSWORD = os.environ.get("STAFF_SIGNUP_PASSWORD")
 STAFF_SIGNUP_ENABLED = os.environ.get("ENABLE_STAFF_SIGNUP", "0").strip().lower() in {"1", "true", "yes", "on"}
 WALLET_PASS_ENABLED = os.environ.get("ENABLE_WALLET_PASS", "0").strip().lower() in {"1", "true", "yes", "on"}
+COMMERCE_ENABLED = os.environ.get("ENABLE_COMMERCE", "0").strip().lower() in {"1", "true", "yes", "on"}
+COMMERCE_DEFAULT_CURRENCY = os.environ.get("COMMERCE_CURRENCY", "USD").upper()
+COMMERCE_ORDER_TYPES = {"retail", "membership", "guest_pass", "service", "mixed"}
 
 
 def using_postgres() -> bool:
-    return bool(DATABASE_URL)
+    if DATABASE_URL:
+        return True
+    if ALLOW_SQLITE_FALLBACK:
+        return False
+    raise RuntimeError(
+        "DATABASE_URL is not configured. Set CHECKIN_ALLOW_SQLITE=1 to allow the SQLite fallback in local development."
+    )
 
 
 def _connect_sqlite() -> sqlite3.Connection:
@@ -147,6 +158,12 @@ def init_db():
                 else:
                     cur.execute("INSERT INTO locations(id, name, timezone) VALUES (1, ?, ?)", ("Atlas Gym", "America/Los_Angeles"))
                 con.commit()
+            if using_postgres():
+                try:
+                    cur.execute("ALTER TABLE public.members ADD COLUMN IF NOT EXISTS membership_tier TEXT")
+                    con.commit()
+                except Exception:
+                    con.rollback()
         except Exception:
             # If schema/tables aren't there yet, ignore; migrations will create them.
             pass
@@ -216,6 +233,204 @@ def init_db():
         """
     )
 
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE,
+            description TEXT,
+            sort_order INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_product_categories_name_lower
+        ON product_categories(LOWER(name))
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS products (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER REFERENCES product_categories(id) ON DELETE SET NULL,
+            name TEXT NOT NULL,
+            slug TEXT UNIQUE,
+            barcode TEXT,
+            product_sku TEXT,
+            product_kind TEXT NOT NULL DEFAULT 'retail',
+            service_type TEXT,
+            service_category TEXT,
+            description TEXT,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sell_online INTEGER NOT NULL DEFAULT 0,
+            inventory_tracking INTEGER NOT NULL DEFAULT 0,
+            default_price_type TEXT NOT NULL DEFAULT 'retail',
+            our_cost_cents INTEGER,
+            created_by TEXT,
+            updated_by TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_products_active_kind
+        ON products(product_kind, is_active)
+        WHERE is_active = 1
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_products_sku
+        ON products(product_sku)
+        WHERE product_sku IS NOT NULL
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS product_prices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+            price_type TEXT NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            billing_period TEXT,
+            billing_interval INTEGER,
+            benefit_quantity INTEGER,
+            benefit_unit TEXT,
+            benefit_window_quantity INTEGER,
+            benefit_window_unit TEXT,
+            is_unlimited INTEGER NOT NULL DEFAULT 0,
+            stripe_price_id TEXT,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_product_price_unique
+        ON product_prices(product_id, price_type)
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_product_prices_active
+        ON product_prices(product_id)
+        WHERE is_active = 1
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_number TEXT,
+            member_id INTEGER REFERENCES members(id) ON DELETE SET NULL,
+            guest_name TEXT,
+            guest_email TEXT,
+            guest_phone TEXT,
+            staff_id INTEGER REFERENCES staff(id) ON DELETE SET NULL,
+            order_type TEXT NOT NULL DEFAULT 'retail',
+            status TEXT NOT NULL DEFAULT 'draft',
+            currency TEXT NOT NULL DEFAULT 'USD',
+            subtotal_cents INTEGER NOT NULL DEFAULT 0,
+            tax_cents INTEGER NOT NULL DEFAULT 0,
+            discount_cents INTEGER NOT NULL DEFAULT 0,
+            tip_cents INTEGER NOT NULL DEFAULT 0,
+            total_cents INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            checkout_session_id TEXT,
+            payment_intent_id TEXT,
+            payment_link_url TEXT,
+            expires_at TIMESTAMP,
+            paid_at TIMESTAMP,
+            canceled_at TIMESTAMP,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_orders_number
+        ON orders(order_number)
+        WHERE order_number IS NOT NULL
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            product_id INTEGER REFERENCES products(id) ON DELETE SET NULL,
+            price_id INTEGER REFERENCES product_prices(id) ON DELETE SET NULL,
+            description TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 1,
+            unit_amount_cents INTEGER NOT NULL,
+            tax_cents INTEGER NOT NULL DEFAULT 0,
+            discount_cents INTEGER NOT NULL DEFAULT 0,
+            total_cents INTEGER NOT NULL,
+            metadata TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_order_items_order
+        ON order_items(order_id)
+        """
+    )
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS order_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+            amount_cents INTEGER NOT NULL,
+            currency TEXT NOT NULL DEFAULT 'USD',
+            status TEXT NOT NULL,
+            payment_method_type TEXT,
+            stripe_payment_intent_id TEXT,
+            stripe_checkout_session_id TEXT,
+            stripe_charge_id TEXT,
+            receipt_url TEXT,
+            error_code TEXT,
+            error_message TEXT,
+            raw_payload TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_order_payments_intent
+        ON order_payments(stripe_payment_intent_id)
+        WHERE stripe_payment_intent_id IS NOT NULL
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_order_payments_order_status
+        ON order_payments(order_id, status)
+        """
+    )
+
     cur.execute("SELECT COUNT(*) AS c FROM locations")
     if cur.fetchone()[0] == 0:
         cur.execute("INSERT INTO locations(name, timezone) VALUES (?, ?)", ("Atlas Gym", "America/Los_Angeles"))
@@ -275,6 +490,1258 @@ def normalize_phone(phone: str | None) -> str | None:
     return "+" + digits if digits else None
 
 
+def _coerce_json(value):
+    if value is None or value == "":
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except Exception:
+        return {}
+
+
+def generate_order_number() -> str:
+    now = datetime.now(timezone.utc)
+    return f"ORD{now.strftime('%Y%m%d%H%M%S')}{secrets.token_hex(2).upper()}"
+
+
+def _append_session_placeholder(base_url: str, order_number: str) -> str:
+    if not base_url:
+        return base_url
+    url = base_url.strip()
+    if "{ORDER_NUMBER}" in url:
+        url = url.replace("{ORDER_NUMBER}", order_number)
+    sep = '&' if '?' in url else '?'
+    if "{CHECKOUT_SESSION_ID}" not in url:
+        url = f"{url}{sep}session_id={{CHECKOUT_SESSION_ID}}"
+        sep = '&'
+    if "order=" not in url:
+        url = f"{url}{sep}order={order_number}"
+    return url
+
+
+def _coalesce_row_value(row, key, index=0):
+    if row is None:
+        return None
+    if using_postgres():
+        return row.get(key)
+    if hasattr(row, "keys") and key in row.keys():
+        return row[key]
+    if isinstance(row, (list, tuple)):
+        try:
+            return row[index]
+        except Exception:
+            return None
+    return None
+
+
+def _to_iso(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc).isoformat()
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            return dt.isoformat()
+        except Exception:
+            return value
+    return str(value)
+
+
+def _update_order_status(cur, order_id: int, new_status: str, *, paid_at: datetime | None = None,
+                         checkout_session_id: str | None = None, payment_intent_id: str | None = None,
+                         payment_link_url: str | None = None, canceled_at: datetime | None = None):
+    if using_postgres():
+        cur.execute(
+            """
+            UPDATE orders
+               SET status = %s,
+                   paid_at = COALESCE(%s, paid_at),
+                   checkout_session_id = COALESCE(%s, checkout_session_id),
+                   payment_intent_id = COALESCE(%s, payment_intent_id),
+                   payment_link_url = COALESCE(%s, payment_link_url),
+                   canceled_at = COALESCE(%s, canceled_at),
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = %s
+            """,
+            (
+                new_status,
+                paid_at,
+                checkout_session_id,
+                payment_intent_id,
+                payment_link_url,
+                canceled_at,
+                order_id,
+            ),
+        )
+    else:
+        cur.execute(
+            """
+            UPDATE orders
+               SET status = ?,
+                   paid_at = COALESCE(?, paid_at),
+                   checkout_session_id = COALESCE(?, checkout_session_id),
+                   payment_intent_id = COALESCE(?, payment_intent_id),
+                   payment_link_url = COALESCE(?, payment_link_url),
+                   canceled_at = COALESCE(?, canceled_at),
+                   updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?
+            """,
+            (
+                new_status,
+                paid_at.isoformat() if paid_at else None,
+                checkout_session_id,
+                payment_intent_id,
+                payment_link_url,
+                canceled_at.isoformat() if canceled_at else None,
+                order_id,
+            ),
+        )
+
+
+def _upsert_order_payment(cur, order_id: int, *, amount_cents: int | None, currency: str | None,
+                          status: str, payment_method_type: str | None, payment_intent_id: str | None,
+                          checkout_session_id: str | None, charge_id: str | None, receipt_url: str | None,
+                          error_code: str | None, error_message: str | None, raw_payload: str | None):
+    if not payment_intent_id:
+        return
+    if using_postgres():
+        cur.execute("SELECT id FROM order_payments WHERE stripe_payment_intent_id = %s", (payment_intent_id,))
+    else:
+        cur.execute("SELECT id FROM order_payments WHERE stripe_payment_intent_id = ?", (payment_intent_id,))
+    row = cur.fetchone()
+    amount_cents = int(amount_cents or 0)
+    currency = (currency or COMMERCE_DEFAULT_CURRENCY).upper()
+    if row:
+        payment_id = _coalesce_row_value(row, "id")
+        if using_postgres():
+            cur.execute(
+                """
+                UPDATE order_payments
+                   SET amount_cents = %s,
+                       currency = %s,
+                       status = %s,
+                       payment_method_type = %s,
+                       stripe_checkout_session_id = COALESCE(%s, stripe_checkout_session_id),
+                       stripe_charge_id = COALESCE(%s, stripe_charge_id),
+                       receipt_url = COALESCE(%s, receipt_url),
+                       error_code = %s,
+                       error_message = %s,
+                       raw_payload = %s,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = %s
+                """,
+                (
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                    payment_id,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE order_payments
+                   SET amount_cents = ?,
+                       currency = ?,
+                       status = ?,
+                       payment_method_type = ?,
+                       stripe_checkout_session_id = COALESCE(?, stripe_checkout_session_id),
+                       stripe_charge_id = COALESCE(?, stripe_charge_id),
+                       receipt_url = COALESCE(?, receipt_url),
+                       error_code = ?,
+                       error_message = ?,
+                       raw_payload = ?,
+                       updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """,
+                (
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                    payment_id,
+                ),
+            )
+    else:
+        if using_postgres():
+            cur.execute(
+                """
+                INSERT INTO order_payments (
+                    order_id, amount_cents, currency, status, payment_method_type,
+                    stripe_payment_intent_id, stripe_checkout_session_id, stripe_charge_id, receipt_url,
+                    error_code, error_message, raw_payload
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    order_id,
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    payment_intent_id,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                ),
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO order_payments (
+                    order_id, amount_cents, currency, status, payment_method_type,
+                    stripe_payment_intent_id, stripe_checkout_session_id, stripe_charge_id, receipt_url,
+                    error_code, error_message, raw_payload
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    amount_cents,
+                    currency,
+                    status,
+                    payment_method_type,
+                    payment_intent_id,
+                    checkout_session_id,
+                    charge_id,
+                    receipt_url,
+                    error_code,
+                    error_message,
+                    raw_payload,
+                ),
+            )
+
+
+def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    order_number = metadata.get("order_number")
+    session_id = session_obj.get("id")
+    if not order_id_raw and not session_id and not order_number:
+        return False
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+
+    stripe_api_key = os.environ.get("STRIPE_API_KEY")
+    session_full = session_obj
+    if session_id and stripe_api_key:
+        try:
+            import stripe
+            stripe.api_key = stripe_api_key
+            session_full = stripe.checkout.Session.retrieve(
+                session_id,
+                expand=["customer", "customer_details"],
+            )
+        except Exception:
+            session_full = session_obj
+
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None and session_id:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE checkout_session_id = %s", (session_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE checkout_session_id = ?", (session_id,))
+            row = cur.fetchone()
+        if row is None and order_number:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE order_number = %s", (order_number,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE order_number = ?", (order_number,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        current_status = (_coalesce_row_value(row, "status") or "").lower()
+        payment_status = (session_full.get("payment_status") or session_obj.get("payment_status") or "").lower()
+        if payment_status in {"paid", "no_payment_required"}:
+            new_status = "paid"
+        elif payment_status == "unpaid":
+            new_status = "awaiting_payment"
+        else:
+            new_status = current_status if current_status in {"paid", "refunded"} else "awaiting_payment"
+        payment_intent_id = session_full.get("payment_intent") or session_obj.get("payment_intent")
+        checkout_url = session_full.get("url") or session_obj.get("url")
+        now_utc = datetime.now(timezone.utc)
+
+        customer_details = session_full.get("customer_details") or session_obj.get("customer_details") or {}
+        customer_email = customer_details.get("email") or session_full.get("customer_email") or session_obj.get("customer_email")
+        customer_name = customer_details.get("name") or metadata.get("customer_name")
+        customer_phone = customer_details.get("phone")
+        stripe_customer_id = None
+        cust_obj = session_full.get("customer") or session_obj.get("customer")
+        if isinstance(cust_obj, dict):
+            stripe_customer_id = cust_obj.get("id")
+        elif isinstance(cust_obj, str):
+            stripe_customer_id = cust_obj
+
+        if new_status == "paid" and current_status != "paid":
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "paid",
+                paid_at=now_utc,
+                checkout_session_id=session_id,
+                payment_intent_id=payment_intent_id,
+                payment_link_url=checkout_url,
+            )
+        elif new_status == "awaiting_payment" and current_status in {"pending", "draft", "awaiting_payment"}:
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "awaiting_payment",
+                checkout_session_id=session_id,
+                payment_intent_id=payment_intent_id,
+                payment_link_url=checkout_url,
+            )
+
+        if new_status == "paid" and payment_intent_id:
+            amount_total = session_full.get("amount_total") or session_obj.get("amount_total") or 0
+            currency = (session_full.get("currency") or session_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+            _upsert_order_payment(
+                cur,
+                resolved_order_id,
+                amount_cents=amount_total,
+                currency=currency,
+                status="succeeded",
+                payment_method_type=None,
+                payment_intent_id=payment_intent_id,
+                checkout_session_id=session_id,
+                charge_id=None,
+                receipt_url=None,
+                error_code=None,
+                error_message=None,
+                raw_payload=raw_payload,
+            )
+
+        member_id_for_order = None
+        guest_id_for_order = None
+        email_normalized = normalize_email(customer_email)
+        guest_name_value = customer_name.strip() if customer_name and customer_name.strip() else None
+        phone_norm = normalize_phone(customer_phone)
+        if email_normalized:
+            if using_postgres():
+                cur.execute("SELECT id, stripe_customer_id, name FROM members WHERE email_lower = %s LIMIT 1", (email_normalized,))
+            else:
+                cur.execute("SELECT id, stripe_customer_id, name FROM members WHERE email_lower = ? LIMIT 1", (email_normalized,))
+            member_row = cur.fetchone()
+            if member_row:
+                member_id_for_order = _coalesce_row_value(member_row, "id")
+                existing_customer_id = _coalesce_row_value(member_row, "stripe_customer_id")
+                existing_name = _coalesce_row_value(member_row, "name")
+                if stripe_customer_id and stripe_customer_id != existing_customer_id:
+                    if using_postgres():
+                        cur.execute("UPDATE members SET stripe_customer_id = %s WHERE id = %s", (stripe_customer_id, member_id_for_order))
+                    else:
+                        cur.execute("UPDATE members SET stripe_customer_id = ? WHERE id = ?", (stripe_customer_id, member_id_for_order))
+                if customer_name and customer_name.strip() and customer_name.strip() != (existing_name or ''):
+                    if using_postgres():
+                        cur.execute("UPDATE members SET name = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (customer_name.strip(), member_id_for_order))
+                    else:
+                        cur.execute("UPDATE members SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (customer_name.strip(), member_id_for_order))
+                if phone_norm:
+                    if using_postgres():
+                        cur.execute("UPDATE members SET phone_e164 = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (phone_norm, member_id_for_order))
+                    else:
+                        cur.execute("UPDATE members SET phone_e164 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (phone_norm, member_id_for_order))
+            else:
+                if using_postgres():
+                    cur.execute("SELECT id, stripe_customer_id, name, phone_e164 FROM guests WHERE email_lower = %s LIMIT 1", (email_normalized,))
+                else:
+                    cur.execute("SELECT id, stripe_customer_id, name, phone_e164 FROM guests WHERE email_lower = ? LIMIT 1", (email_normalized,))
+                guest_row = cur.fetchone()
+                if guest_row:
+                    guest_id_for_order = _coalesce_row_value(guest_row, "id")
+                    existing_guest_customer = _coalesce_row_value(guest_row, "stripe_customer_id")
+                    existing_guest_name = _coalesce_row_value(guest_row, "name")
+                    existing_guest_phone = _coalesce_row_value(guest_row, "phone_e164")
+                    guest_name_value = guest_name_value or existing_guest_name
+                    if stripe_customer_id and stripe_customer_id != existing_guest_customer:
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET stripe_customer_id = %s WHERE id = %s", (stripe_customer_id, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET stripe_customer_id = ? WHERE id = ?", (stripe_customer_id, guest_id_for_order))
+                    if guest_name_value and guest_name_value != (existing_guest_name or ''):
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET name = %s WHERE id = %s", (guest_name_value, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET name = ? WHERE id = ?", (guest_name_value, guest_id_for_order))
+                    if phone_norm and phone_norm != (existing_guest_phone or ''):
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET phone_e164 = %s WHERE id = %s", (phone_norm, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET phone_e164 = ? WHERE id = ?", (phone_norm, guest_id_for_order))
+                else:
+                    default_name = guest_name_value or (email_normalized.split('@')[0].replace('.', ' ').title() if email_normalized else 'Guest')
+                    guest_name_value = default_name
+                    if using_postgres():
+                        cur.execute(
+                            """
+                            INSERT INTO guests(name, email_lower, phone_e164, stripe_customer_id, last_order_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (default_name, email_normalized, phone_norm, stripe_customer_id, now_utc),
+                        )
+                        guest_id_for_order = cur.fetchone()[0]
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO guests(name, email_lower, phone_e164, stripe_customer_id, last_order_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (default_name, email_normalized, phone_norm, stripe_customer_id, now_utc.isoformat()),
+                        )
+                        guest_id_for_order = cur.lastrowid
+                if guest_id_for_order:
+                    if using_postgres():
+                        cur.execute("UPDATE guests SET last_order_at = %s WHERE id = %s", (now_utc, guest_id_for_order))
+                    else:
+                        cur.execute("UPDATE guests SET last_order_at = ? WHERE id = ?", (now_utc.isoformat(), guest_id_for_order))
+        update_fields = []
+        params = []
+        if guest_name_value:
+            update_fields.append("guest_name = {}".format('%s' if using_postgres() else '?'))
+            params.append(guest_name_value)
+        if email_normalized:
+            update_fields.append("guest_email = {}".format('%s' if using_postgres() else '?'))
+            params.append(email_normalized)
+        if member_id_for_order:
+            update_fields.append("member_id = {}".format('%s' if using_postgres() else '?'))
+            params.append(member_id_for_order)
+        if guest_id_for_order:
+            update_fields.append("guest_id = {}".format('%s' if using_postgres() else '?'))
+            params.append(guest_id_for_order)
+        if update_fields:
+            if using_postgres():
+                cur.execute(
+                    f"UPDATE orders SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                    (*params, resolved_order_id),
+                )
+            else:
+                cur.execute(
+                    f"UPDATE orders SET {', '.join(update_fields)}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (*params, resolved_order_id),
+                )
+
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_commerce_checkout_expired(session_obj: dict) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    session_id = session_obj.get("id")
+    if not order_id_raw and not session_id:
+        return False
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None and session_id:
+            if using_postgres():
+                cur.execute("SELECT id FROM orders WHERE checkout_session_id = %s", (session_id,))
+            else:
+                cur.execute("SELECT id FROM orders WHERE checkout_session_id = ?", (session_id,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        now_utc = datetime.now(timezone.utc)
+        _update_order_status(
+            cur,
+            resolved_order_id,
+            "expired",
+            checkout_session_id=session_id,
+            canceled_at=now_utc,
+        )
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_commerce_payment_intent(intent_obj: dict, outcome: str, raw_payload: str) -> bool:
+    payment_intent_id = intent_obj.get("id")
+    if not payment_intent_id:
+        return False
+    metadata = intent_obj.get("metadata") or {}
+    order_id_raw = metadata.get("order_id")
+    order_id = None
+    if order_id_raw:
+        try:
+            order_id = int(order_id_raw)
+        except Exception:
+            order_id = None
+    con = connect_db(); cur = con.cursor()
+    try:
+        row = None
+        if order_id is not None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE id = %s", (order_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE id = ?", (order_id,))
+            row = cur.fetchone()
+        if row is None:
+            if using_postgres():
+                cur.execute("SELECT id, status FROM orders WHERE payment_intent_id = %s", (payment_intent_id,))
+            else:
+                cur.execute("SELECT id, status FROM orders WHERE payment_intent_id = ?", (payment_intent_id,))
+            row = cur.fetchone()
+        if row is None:
+            return False
+        resolved_order_id = _coalesce_row_value(row, "id")
+        current_status = (_coalesce_row_value(row, "status") or "").lower()
+
+        amount = intent_obj.get("amount_received") or intent_obj.get("amount") or 0
+        currency = (intent_obj.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+        payment_method_type = None
+        pm_types = intent_obj.get("payment_method_types") or []
+        if pm_types:
+            payment_method_type = pm_types[0]
+        charges = intent_obj.get("charges") or {}
+        charge_id = None
+        receipt_url = None
+        if charges.get("data"):
+            charge = charges["data"][0]
+            charge_id = charge.get("id")
+            receipt_url = charge.get("receipt_url")
+            pmd = charge.get("payment_method_details") or {}
+            if not payment_method_type:
+                for key, val in pmd.items():
+                    if isinstance(val, dict):
+                        payment_method_type = key
+                        break
+        error_code = None
+        error_message = None
+        if outcome == "failed":
+            last_error = intent_obj.get("last_payment_error") or {}
+            error_code = last_error.get("code")
+            error_message = last_error.get("message")
+
+        now_utc = datetime.now(timezone.utc)
+        if outcome == "succeeded" and current_status != "paid":
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "paid",
+                paid_at=now_utc,
+                payment_intent_id=payment_intent_id,
+            )
+        elif outcome == "failed" and current_status not in {"paid", "refunded"}:
+            _update_order_status(
+                cur,
+                resolved_order_id,
+                "failed",
+                payment_intent_id=payment_intent_id,
+                canceled_at=now_utc,
+            )
+
+        status_value = "succeeded" if outcome == "succeeded" else "failed"
+        _upsert_order_payment(
+            cur,
+            resolved_order_id,
+            amount_cents=amount,
+            currency=currency,
+            status=status_value,
+            payment_method_type=payment_method_type,
+            payment_intent_id=payment_intent_id,
+            checkout_session_id=None,
+            charge_id=charge_id,
+            receipt_url=receipt_url,
+            error_code=error_code,
+            error_message=error_message,
+            raw_payload=raw_payload,
+        )
+
+        con.commit()
+        return True
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _handle_signup_checkout_session(session_obj: dict, stripe_module) -> bool:
+    metadata = session_obj.get("metadata") or {}
+    if metadata.get("order_id"):
+        return False
+    try:
+        session_id = session_obj.get("id")
+        stripe_api_key = os.environ.get("STRIPE_API_KEY")
+        sess_full = session_obj
+        if stripe_api_key:
+            stripe_module.api_key = stripe_api_key
+        if session_id and stripe_api_key:
+            try:
+                sess_full = stripe_module.checkout.Session.retrieve(
+                    session_id,
+                    expand=["line_items", "customer", "subscription"],
+                )
+            except Exception:
+                sess_full = session_obj
+
+        cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
+        customer_id = (cust.get("id") if cust else sess_full.get("customer"))
+        customer_email = None
+        if sess_full.get("customer_details"):
+            customer_email = sess_full["customer_details"].get("email")
+        if not customer_email:
+            customer_email = sess_full.get("customer_email") or metadata.get("app_member_email")
+        customer_name = metadata.get("app_member_name") or (cust.get("name") if cust else None)
+
+        if not customer_email:
+            return True
+
+        con = connect_db(); cur = con.cursor()
+        try:
+            email_n = normalize_email(customer_email)
+            name = customer_name or "Member"
+            phone = (cust.get("phone") if cust else None)
+            if using_postgres():
+                cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
+            else:
+                cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
+            row = cur.fetchone()
+            if row:
+                member_id = _coalesce_row_value(row, "id")
+                if using_postgres():
+                    cur.execute(
+                        "UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                        (name, normalize_phone(phone), customer_id, member_id),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (name, normalize_phone(phone), customer_id, member_id),
+                    )
+            else:
+                if using_postgres():
+                    cur.execute(
+                        "INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id",
+                        (name, email_n, normalize_phone(phone), customer_id),
+                    )
+                    member_id = cur.fetchone()[0]
+                else:
+                    cur.execute(
+                        "INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)",
+                        (name, email_n, normalize_phone(phone), 'active', customer_id),
+                    )
+                    member_id = cur.lastrowid
+
+            if using_postgres():
+                cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
+            else:
+                cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
+            tokrow = cur.fetchone()
+            token = _coalesce_row_value(tokrow, "qr_token") if tokrow else None
+            if not token:
+                token = secrets.token_urlsafe(24)
+                if using_postgres():
+                    cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
+                else:
+                    cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+
+            con.commit()
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+        send_email(
+            customer_email,
+            "Your Atlas Gym Check-In Code",
+            (
+                f"Hi {name},\n\nYour membership is active. Open your QR code here:\n"
+                f"{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nGymSense — Your gym operations, simplified."
+            ),
+        )
+        return True
+    except Exception:
+        return True
+
+
+def _serialize_order_row(row) -> dict:
+    return {
+        "id": _coalesce_row_value(row, "id"),
+        "order_number": _coalesce_row_value(row, "order_number"),
+        "status": (_coalesce_row_value(row, "status") or '').lower(),
+        "currency": (_coalesce_row_value(row, "currency") or 'USD').upper(),
+        "subtotal_cents": int(_coalesce_row_value(row, "subtotal_cents") or 0),
+        "tax_cents": int(_coalesce_row_value(row, "tax_cents") or 0),
+        "discount_cents": int(_coalesce_row_value(row, "discount_cents") or 0),
+        "tip_cents": int(_coalesce_row_value(row, "tip_cents") or 0),
+        "total_cents": int(_coalesce_row_value(row, "total_cents") or 0),
+        "notes": _coalesce_row_value(row, "notes"),
+        "guest_id": _coalesce_row_value(row, "guest_id"),
+        "guest_name": _coalesce_row_value(row, "guest_name"),
+        "guest_email": _coalesce_row_value(row, "guest_email"),
+        "member_id": _coalesce_row_value(row, "member_id"),
+        "checkout_session_id": _coalesce_row_value(row, "checkout_session_id"),
+        "payment_intent_id": _coalesce_row_value(row, "payment_intent_id"),
+        "payment_link_url": _coalesce_row_value(row, "payment_link_url"),
+        "expires_at": _to_iso(_coalesce_row_value(row, "expires_at")),
+        "paid_at": _to_iso(_coalesce_row_value(row, "paid_at")),
+        "canceled_at": _to_iso(_coalesce_row_value(row, "canceled_at")),
+        "created_at": _to_iso(_coalesce_row_value(row, "created_at")),
+    }
+
+
+def _fetch_order_detail(order_id: int) -> dict | None:
+    con = connect_db(); cur = con.cursor()
+    try:
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT o.id, o.order_number, o.status, o.currency, o.subtotal_cents, o.tax_cents, o.discount_cents,
+                       o.tip_cents, o.total_cents, o.notes, o.guest_name, o.guest_email, o.member_id, o.guest_id,
+                       o.checkout_session_id, o.payment_intent_id, o.payment_link_url, o.expires_at, o.paid_at,
+                       o.canceled_at, o.created_at,
+                       g.name AS guest_lookup_name, g.email_lower AS guest_lookup_email, g.phone_e164 AS guest_lookup_phone
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.id = %s
+                """,
+                (order_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT o.id, o.order_number, o.status, o.currency, o.subtotal_cents, o.tax_cents, o.discount_cents,
+                       o.tip_cents, o.total_cents, o.notes, o.guest_name, o.guest_email, o.member_id, o.guest_id,
+                       o.checkout_session_id, o.payment_intent_id, o.payment_link_url, o.expires_at, o.paid_at,
+                       o.canceled_at, o.created_at,
+                       g.name AS guest_lookup_name, g.email_lower AS guest_lookup_email, g.phone_e164 AS guest_lookup_phone
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.id = ?
+                """,
+                (order_id,),
+            )
+        row = cur.fetchone()
+        if not row:
+            return None
+        order = _serialize_order_row(row)
+        guest_lookup_name = _coalesce_row_value(row, "guest_lookup_name")
+        guest_lookup_email = _coalesce_row_value(row, "guest_lookup_email")
+        guest_lookup_phone = _coalesce_row_value(row, "guest_lookup_phone")
+        if guest_lookup_name and not order.get("guest_name"):
+            order["guest_name"] = guest_lookup_name
+        if guest_lookup_email and not order.get("guest_email"):
+            order["guest_email"] = guest_lookup_email
+        if guest_lookup_phone:
+            order["guest_phone"] = guest_lookup_phone
+
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.product_id, oi.price_id, oi.description, oi.quantity,
+                       oi.unit_amount_cents, oi.tax_cents, oi.discount_cents, oi.total_cents,
+                       p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = %s
+                 ORDER BY oi.id ASC
+                """,
+                (order_id,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT oi.id, oi.order_id, oi.product_id, oi.price_id, oi.description, oi.quantity,
+                       oi.unit_amount_cents, oi.tax_cents, oi.discount_cents, oi.total_cents,
+                       p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = ?
+                 ORDER BY oi.id ASC
+                """,
+                (order_id,),
+            )
+        items = []
+        for item_row in cur.fetchall():
+            items.append({
+                "id": _coalesce_row_value(item_row, "id"),
+                "product_id": _coalesce_row_value(item_row, "product_id"),
+                "price_id": _coalesce_row_value(item_row, "price_id"),
+                "description": _coalesce_row_value(item_row, "description"),
+                "product_name": _coalesce_row_value(item_row, "name") or _coalesce_row_value(item_row, "description"),
+                "quantity": int(_coalesce_row_value(item_row, "quantity") or 0),
+                "unit_amount_cents": int(_coalesce_row_value(item_row, "unit_amount_cents") or 0),
+                "total_cents": int(_coalesce_row_value(item_row, "total_cents") or 0),
+            })
+        order["items"] = items
+        order["checkout_url"] = order.get("payment_link_url")
+        return order
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+
+def _fetch_recent_orders(limit: int = 10) -> list:
+    con = connect_db(); cur = con.cursor()
+    try:
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT o.id, o.order_number, o.status, o.total_cents, o.currency, o.created_at,
+                       o.guest_name, o.guest_email, o.guest_id, g.name AS guest_lookup_name
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.status IS DISTINCT FROM 'awaiting_payment'
+                 ORDER BY o.created_at DESC
+                 LIMIT %s
+                """,
+                (limit,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT o.id, o.order_number, o.status, o.total_cents, o.currency, o.created_at,
+                       o.guest_name, o.guest_email, o.guest_id, g.name AS guest_lookup_name
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.status != 'awaiting_payment'
+                 ORDER BY o.created_at DESC
+                 LIMIT ?
+                """,
+                (limit,),
+            )
+        rows = cur.fetchall() or []
+        orders = []
+        order_ids = []
+        for row in rows:
+            order = {
+                "id": _coalesce_row_value(row, "id"),
+                "order_number": _coalesce_row_value(row, "order_number"),
+                "status": (_coalesce_row_value(row, "status") or '').lower(),
+                "total_cents": int(_coalesce_row_value(row, "total_cents") or 0),
+                "currency": (_coalesce_row_value(row, "currency") or 'USD').upper(),
+                "created_at": _to_iso(_coalesce_row_value(row, "created_at"))
+            }
+            order["guest_name"] = _coalesce_row_value(row, "guest_name")
+            order["guest_email"] = _coalesce_row_value(row, "guest_email")
+            order["guest_name"] = order.get("guest_name") or _coalesce_row_value(row, "guest_lookup_name")
+            orders.append(order)
+            order_ids.append(order["id"])
+        if not order_ids:
+            return orders
+
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT oi.order_id, oi.description, oi.quantity, p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id = ANY(%s)
+                 ORDER BY oi.order_id, oi.id ASC
+                """,
+                (order_ids,),
+            )
+        else:
+            placeholders = ','.join('?' for _ in order_ids)
+            cur.execute(
+                f"""
+                SELECT oi.order_id, oi.description, oi.quantity, p.name
+                  FROM order_items oi
+                  LEFT JOIN products p ON p.id = oi.product_id
+                 WHERE oi.order_id IN ({placeholders})
+                 ORDER BY oi.order_id, oi.id ASC
+                """,
+                tuple(order_ids),
+            )
+        first_items = {}
+        for item_row in cur.fetchall() or []:
+            order_id = _coalesce_row_value(item_row, "order_id")
+            if order_id in first_items:
+                continue
+            label = _coalesce_row_value(item_row, "name") or _coalesce_row_value(item_row, "description")
+            qty = int(_coalesce_row_value(item_row, "quantity") or 0)
+            if label:
+                summary = f"{label} ×{qty}" if qty > 1 else label
+                first_items[order_id] = summary
+
+        for order in orders:
+            summary = first_items.get(order["id"]) or order.get("order_number")
+            guest = order.get("guest_name") or order.get("guest_email")
+            if guest:
+                order["summary"] = guest
+            else:
+                order["summary"] = summary
+
+        return orders
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+
+def _row_to_product(row) -> dict:
+    if using_postgres():
+        getter = row.get
+    else:
+        getter = row.__getitem__
+    return {
+        "id": getter("id"),
+        "category_id": getter("category_id"),
+        "name": getter("name"),
+        "slug": getter("slug"),
+        "barcode": getter("barcode"),
+        "product_sku": getter("product_sku"),
+        "product_kind": getter("product_kind"),
+        "service_type": getter("service_type"),
+        "service_category": getter("service_category"),
+        "description": getter("description"),
+        "default_price_type": getter("default_price_type"),
+    }
+
+
+def _row_to_price(row) -> dict:
+    if using_postgres():
+        getter = row.get
+    else:
+        getter = row.__getitem__
+    return {
+        "id": getter("id"),
+        "product_id": getter("product_id"),
+        "price_type": getter("price_type"),
+        "amount_cents": getter("amount_cents"),
+        "currency": getter("currency"),
+        "billing_period": getter("billing_period"),
+        "billing_interval": getter("billing_interval"),
+        "benefit_quantity": getter("benefit_quantity"),
+        "benefit_unit": getter("benefit_unit"),
+        "benefit_window_quantity": getter("benefit_window_quantity"),
+        "benefit_window_unit": getter("benefit_window_unit"),
+        "is_unlimited": bool(getter("is_unlimited")),
+        "stripe_price_id": getter("stripe_price_id"),
+        "is_default": bool(getter("is_default")),
+        "is_active": bool(getter("is_active")),
+        "metadata": _coerce_json(getter("metadata")),
+    }
+
+
+def load_product_and_price(cur, product_id: int, price_type: str | None) -> tuple[dict, dict]:
+    if using_postgres():
+        cur.execute(
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, default_price_type
+            FROM products
+            WHERE id = %s
+            """,
+            (product_id,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, default_price_type
+            FROM products
+            WHERE id = ?
+            """,
+            (product_id,),
+        )
+    product_row = cur.fetchone()
+    if not product_row:
+        return None, None
+    product = _row_to_product(product_row)
+    resolved_price_type = price_type or product.get("default_price_type")
+
+    if using_postgres():
+        cur.execute(
+            """
+            SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                   billing_interval, benefit_quantity, benefit_unit, benefit_window_quantity,
+                   benefit_window_unit, is_unlimited, stripe_price_id, is_default,
+                   is_active, metadata
+            FROM product_prices
+            WHERE product_id = %s AND price_type = %s AND is_active = TRUE
+            """,
+            (product_id, resolved_price_type),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                   billing_interval, benefit_quantity, benefit_unit, benefit_window_quantity,
+                   benefit_window_unit, is_unlimited, stripe_price_id, is_default,
+                   is_active, metadata
+            FROM product_prices
+            WHERE product_id = ? AND price_type = ? AND is_active = 1
+            """,
+            (product_id, resolved_price_type),
+        )
+    price_row = cur.fetchone()
+    if not price_row:
+        return product, None
+    price = _row_to_price(price_row)
+    return product, price
+
+
+def fetch_product_catalog(include_inactive: bool = False) -> dict:
+    con = connect_db()
+    cur = con.cursor()
+    try:
+        categories: list[dict] = []
+        category_map: dict[int, dict] = {}
+        if using_postgres():
+            cur.execute(
+                """
+                SELECT id, name, slug, description, sort_order
+                FROM product_categories
+                ORDER BY sort_order ASC, name ASC
+                """
+            )
+            rows = cur.fetchall()
+            for row in rows:
+                cat = {
+                    "id": row.get("id"),
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "description": row.get("description"),
+                    "sort_order": row.get("sort_order") or 0,
+                    "products": [],
+                }
+                categories.append(cat)
+                category_map[cat["id"]] = cat
+        else:
+            cur.execute(
+                """
+                SELECT id, name, slug, description, sort_order
+                FROM product_categories
+                ORDER BY sort_order ASC, name ASC
+                """
+            )
+            for row in cur.fetchall():
+                cat = {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "slug": row["slug"],
+                    "description": row["description"],
+                    "sort_order": row["sort_order"] or 0,
+                    "products": [],
+                }
+                categories.append(cat)
+                category_map[cat["id"]] = cat
+
+        products: list[dict] = []
+        product_query = (
+            """
+            SELECT id, category_id, name, slug, barcode, product_sku, product_kind,
+                   service_type, service_category, description, is_active,
+                   sell_online, inventory_tracking, default_price_type, our_cost_cents,
+                   created_at, updated_at
+            FROM products
+            """
+        )
+        product_params: list = []
+        if using_postgres():
+            if not include_inactive:
+                product_query += " WHERE is_active = %s"
+                product_params.append(True)
+            product_query += " ORDER BY name ASC"
+            cur.execute(product_query, tuple(product_params))
+        else:
+            if not include_inactive:
+                product_query += " WHERE is_active = 1"
+            product_query += " ORDER BY name ASC"
+            cur.execute(product_query)
+        product_rows = cur.fetchall()
+        product_map: dict[int, dict] = {}
+        for row in product_rows:
+            if using_postgres():
+                pid = row.get("id")
+                item = {
+                    "id": pid,
+                    "category_id": row.get("category_id"),
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "barcode": row.get("barcode"),
+                    "product_sku": row.get("product_sku"),
+                    "product_kind": row.get("product_kind"),
+                    "service_type": row.get("service_type"),
+                    "service_category": row.get("service_category"),
+                    "description": row.get("description"),
+                    "is_active": bool(row.get("is_active")),
+                    "sell_online": bool(row.get("sell_online")),
+                    "inventory_tracking": bool(row.get("inventory_tracking")),
+                    "default_price_type": row.get("default_price_type"),
+                    "our_cost_cents": row.get("our_cost_cents"),
+                    "prices": [],
+                }
+            else:
+                pid = row["id"]
+                item = {
+                    "id": pid,
+                    "category_id": row["category_id"],
+                    "name": row["name"],
+                    "slug": row["slug"],
+                    "barcode": row["barcode"],
+                    "product_sku": row["product_sku"],
+                    "product_kind": row["product_kind"],
+                    "service_type": row["service_type"],
+                    "service_category": row["service_category"],
+                    "description": row["description"],
+                    "is_active": bool(row["is_active"]),
+                    "sell_online": bool(row["sell_online"]),
+                    "inventory_tracking": bool(row["inventory_tracking"]),
+                    "default_price_type": row["default_price_type"],
+                    "our_cost_cents": row["our_cost_cents"],
+                    "prices": [],
+                }
+            products.append(item)
+            product_map[pid] = item
+
+        if product_map:
+            price_query = (
+                """
+                SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                       billing_interval, benefit_quantity, benefit_unit,
+                       benefit_window_quantity, benefit_window_unit, is_unlimited,
+                       stripe_price_id, is_default, is_active, metadata
+                FROM product_prices
+                WHERE product_id = ANY(%s)
+                ORDER BY product_id, price_type
+                """
+                if using_postgres()
+                else
+                """
+                SELECT id, product_id, price_type, amount_cents, currency, billing_period,
+                       billing_interval, benefit_quantity, benefit_unit,
+                       benefit_window_quantity, benefit_window_unit, is_unlimited,
+                       stripe_price_id, is_default, is_active, metadata
+                FROM product_prices
+                WHERE product_id IN (
+                """
+            )
+            if using_postgres():
+                cur.execute(price_query, (list(product_map.keys()),))
+            else:
+                placeholders = ",".join("?" for _ in product_map)
+                cur.execute(price_query + placeholders + ") ORDER BY product_id, price_type", tuple(product_map.keys()))
+            for row in cur.fetchall():
+                if using_postgres():
+                    pid = row.get("product_id")
+                    target = product_map.get(pid)
+                    if not target:
+                        continue
+                    price = {
+                        "id": row.get("id"),
+                        "price_type": row.get("price_type"),
+                        "amount_cents": row.get("amount_cents"),
+                        "currency": row.get("currency"),
+                        "billing_period": row.get("billing_period"),
+                        "billing_interval": row.get("billing_interval"),
+                        "benefit_quantity": row.get("benefit_quantity"),
+                        "benefit_unit": row.get("benefit_unit"),
+                        "benefit_window_quantity": row.get("benefit_window_quantity"),
+                        "benefit_window_unit": row.get("benefit_window_unit"),
+                        "is_unlimited": bool(row.get("is_unlimited")),
+                        "stripe_price_id": row.get("stripe_price_id"),
+                        "is_default": bool(row.get("is_default")),
+                        "is_active": bool(row.get("is_active")),
+                        "metadata": _coerce_json(row.get("metadata")),
+                    }
+                else:
+                    pid = row["product_id"]
+                    target = product_map.get(pid)
+                    if not target:
+                        continue
+                    price = {
+                        "id": row["id"],
+                        "price_type": row["price_type"],
+                        "amount_cents": row["amount_cents"],
+                        "currency": row["currency"],
+                        "billing_period": row["billing_period"],
+                        "billing_interval": row["billing_interval"],
+                        "benefit_quantity": row["benefit_quantity"],
+                        "benefit_unit": row["benefit_unit"],
+                        "benefit_window_quantity": row["benefit_window_quantity"],
+                        "benefit_window_unit": row["benefit_window_unit"],
+                        "is_unlimited": bool(row["is_unlimited"]),
+                        "stripe_price_id": row["stripe_price_id"],
+                        "is_default": bool(row["is_default"]),
+                        "is_active": bool(row["is_active"]),
+                        "metadata": _coerce_json(row["metadata"]),
+                    }
+                target.setdefault("prices", []).append(price)
+
+        uncategorized: list[dict] = []
+        for item in products:
+            cat_id = item.get("category_id")
+            if cat_id and cat_id in category_map:
+                category_map[cat_id]["products"].append(item)
+            else:
+                uncategorized.append(item)
+
+        ordered_categories = [c for c in categories if c.get("products")]
+        if uncategorized:
+            ordered_categories.append({
+                "id": None,
+                "name": "Uncategorized",
+                "slug": None,
+                "description": None,
+                "sort_order": 999,
+                "products": uncategorized,
+            })
+
+        return {"categories": ordered_categories, "products": products}
+    finally:
+        con.close()
 def ensure_qr_token(member) -> str:
     token = member["qr_token"]
     if token:
@@ -513,6 +1980,478 @@ def create_app():
             return redirect(url_for("admin_login", next="/staff"))
         return render_template("checkin/staff_dashboard.html", datetime=datetime)
 
+    @app.get("/api/commerce/catalog")
+    def api_commerce_catalog():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        include_inactive = request.args.get("include_inactive", "0").strip().lower() in {"1", "true", "yes", "on"}
+        catalog = fetch_product_catalog(include_inactive=include_inactive)
+        catalog.update({"ok": True, "currency": COMMERCE_DEFAULT_CURRENCY})
+        return jsonify(catalog)
+
+    @app.post("/api/commerce/orders")
+    def api_commerce_create_order():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+        payload = request.get_json(silent=True) or {}
+        items_payload = payload.get("items") or []
+        if not items_payload:
+            return jsonify({"ok": False, "error": "No items provided"}), 400
+
+        order_type = (payload.get("order_type") or "retail").strip()
+        if order_type not in COMMERCE_ORDER_TYPES:
+            return jsonify({"ok": False, "error": f"Unsupported order_type '{order_type}'"}), 400
+
+        currency = (payload.get("currency") or COMMERCE_DEFAULT_CURRENCY).upper()
+        if currency != COMMERCE_DEFAULT_CURRENCY:
+            return jsonify({"ok": False, "error": f"Unsupported currency '{currency}'"}), 400
+
+        member_id = payload.get("member_id")
+        guest_name = (payload.get("guest_name") or "").strip() or None
+        guest_email = normalize_email(payload.get("guest_email"))
+        guest_phone = normalize_phone(payload.get("guest_phone"))
+        notes = (payload.get("notes") or "").strip() or None
+        metadata_value = payload.get("metadata")
+
+        try:
+            expires_minutes = int(payload.get("expires_in_minutes") or 30)
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid expires_in_minutes"}), 400
+        if expires_minutes <= 0:
+            expires_minutes = 30
+        expires_at_dt = datetime.now(timezone.utc) + timedelta(minutes=expires_minutes)
+
+        con = connect_db()
+        cur = con.cursor()
+        try:
+            if member_id:
+                if using_postgres():
+                    cur.execute("SELECT id FROM members WHERE id = %s", (member_id,))
+                else:
+                    cur.execute("SELECT id FROM members WHERE id = ?", (member_id,))
+                if not cur.fetchone():
+                    return jsonify({"ok": False, "error": "Member not found"}), 404
+
+            stripe_api_key = os.environ.get("STRIPE_API_KEY")
+            if not stripe_api_key:
+                return jsonify({"ok": False, "error": "Stripe not configured"}), 501
+            try:
+                import stripe
+            except Exception as exc:
+                return jsonify({"ok": False, "error": f"Stripe SDK not available: {exc}"}), 500
+
+            stripe.api_key = stripe_api_key
+
+            prepared_items = []
+            subtotal_cents = 0
+            stripe_line_items: list[dict] = []
+            has_subscription = False
+            has_one_time = False
+            for idx, raw_item in enumerate(items_payload):
+                product_id = raw_item.get("product_id")
+                if not product_id:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: missing product_id"}), 400
+                price_type = raw_item.get("price_type")
+                quantity_raw = raw_item.get("quantity", 1)
+                try:
+                    quantity = int(quantity_raw)
+                except Exception:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: invalid quantity"}), 400
+                if quantity <= 0:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: quantity must be > 0"}), 400
+
+                product, price = load_product_and_price(cur, product_id, price_type)
+                if not product:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: product not found"}), 404
+                if not price:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: price not available"}), 400
+
+                line_total = int(price["amount_cents"] or 0) * quantity
+                subtotal_cents += line_total
+                stripe_price_id = price.get("stripe_price_id")
+                if not stripe_price_id:
+                    return jsonify({"ok": False, "error": f"Item {idx + 1}: Stripe price not configured"}), 400
+
+                stripe_line_items.append({"price": stripe_price_id, "quantity": quantity})
+
+                if price.get("billing_period"):
+                    has_subscription = True
+                else:
+                    has_one_time = True
+
+                prepared_items.append(
+                    {
+                        "product": product,
+                        "price": price,
+                        "quantity": quantity,
+                        "line_total": line_total,
+                    }
+                )
+
+            if has_subscription and has_one_time:
+                return jsonify({"ok": False, "error": "Cannot mix subscription and one-time items in a single order"}), 400
+
+            total_cents = subtotal_cents  # taxes/discounts applied later
+            order_number = payload.get("order_number") or generate_order_number()
+            status = "pending"
+
+            metadata_pg = json.dumps(metadata_value) if metadata_value is not None else None
+            metadata_sqlite = json.dumps(metadata_value) if metadata_value is not None else None
+            expires_at_value = expires_at_dt if using_postgres() else expires_at_dt.isoformat()
+
+            if using_postgres():
+                cur.execute(
+                    """
+                    INSERT INTO orders
+                        (order_number, member_id, guest_name, guest_email, guest_phone, staff_id,
+                         order_type, status, currency, subtotal_cents, tax_cents, discount_cents,
+                         tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                         payment_link_url, expires_at, metadata)
+                    VALUES
+                        (%s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, %s, %s, %s,
+                         %s, %s, %s, NULL, NULL,
+                         NULL, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        order_number,
+                        member_id,
+                        guest_name,
+                        guest_email,
+                        guest_phone,
+                        None,
+                        order_type,
+                        status,
+                        currency,
+                        subtotal_cents,
+                        0,
+                        0,
+                        0,
+                        total_cents,
+                        notes,
+                        expires_at_value,
+                        metadata_pg,
+                    ),
+                )
+                order_id = _coalesce_row_value(cur.fetchone(), "id")
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO orders
+                        (order_number, member_id, guest_name, guest_email, guest_phone, staff_id,
+                         order_type, status, currency, subtotal_cents, tax_cents, discount_cents,
+                         tip_cents, total_cents, notes, checkout_session_id, payment_intent_id,
+                         payment_link_url, expires_at, metadata)
+                    VALUES
+                        (?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, NULL, NULL,
+                         NULL, ?, ?)
+                    """,
+                    (
+                        order_number,
+                        member_id,
+                        guest_name,
+                        guest_email,
+                        guest_phone,
+                        None,
+                        order_type,
+                        status,
+                        currency,
+                        subtotal_cents,
+                        0,
+                        0,
+                        0,
+                        total_cents,
+                        notes,
+                        expires_at_value,
+                        metadata_sqlite,
+                    ),
+                )
+                order_id = cur.lastrowid
+
+            for item in prepared_items:
+                product = item["product"]
+                price = item["price"]
+                quantity = item["quantity"]
+                line_total = item["line_total"]
+                metadata_line_json = json.dumps({"price_type": price["price_type"]})
+
+                if using_postgres():
+                    cur.execute(
+                        """
+                        INSERT INTO order_items
+                            (order_id, product_id, price_id, description, quantity,
+                             unit_amount_cents, tax_cents, discount_cents, total_cents, metadata)
+                        VALUES
+                            (%s, %s, %s, %s, %s,
+                             %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            order_id,
+                            product["id"],
+                            price["id"],
+                            product["name"],
+                            quantity,
+                            price["amount_cents"],
+                            0,
+                            0,
+                            line_total,
+                            metadata_line_json,
+                        ),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO order_items
+                            (order_id, product_id, price_id, description, quantity,
+                             unit_amount_cents, tax_cents, discount_cents, total_cents, metadata)
+                        VALUES
+                            (?, ?, ?, ?, ?,
+                             ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            order_id,
+                            product["id"],
+                            price["id"],
+                            product["name"],
+                            quantity,
+                            price["amount_cents"],
+                            0,
+                            0,
+                            line_total,
+                            metadata_line_json,
+                        ),
+                    )
+
+            # Build Stripe Checkout Session
+            mode = "subscription" if has_subscription else "payment"
+
+            success_url_env = os.environ.get("COMMERCE_CHECKOUT_SUCCESS_URL") or os.environ.get("STRIPE_CHECKOUT_SUCCESS_URL")
+            cancel_url_env = os.environ.get("COMMERCE_CHECKOUT_CANCEL_URL") or os.environ.get("STRIPE_CHECKOUT_CANCEL_URL")
+            default_success = request.url_root.rstrip('/') + "/staff/checkout/success"
+            default_cancel = request.url_root.rstrip('/') + "/staff/checkout/cancel"
+            success_url = _append_session_placeholder(success_url_env or default_success, order_number)
+            cancel_url = (cancel_url_env or default_cancel).strip()
+            if "{ORDER_NUMBER}" in cancel_url:
+                cancel_url = cancel_url.replace("{ORDER_NUMBER}", order_number)
+            if cancel_url:
+                sep_cancel = '&' if '?' in cancel_url else '?'
+                if "order=" not in cancel_url:
+                    cancel_url = f"{cancel_url}{sep_cancel}order={order_number}"
+
+            customer_email = guest_email
+            if not customer_email and member_id:
+                email_query = (
+                    "SELECT email_lower FROM members WHERE id = %s"
+                    if using_postgres()
+                    else "SELECT email_lower FROM members WHERE id = ?"
+                )
+                cur.execute(email_query, (member_id,))
+                member_row = cur.fetchone()
+                if member_row:
+                    customer_email = member_row[0] if not using_postgres() else member_row.get("email_lower")
+
+            session_kwargs = {
+                "mode": mode,
+                "line_items": stripe_line_items,
+                "success_url": success_url,
+                "cancel_url": cancel_url,
+                "metadata": {
+                    "order_id": str(order_id),
+                    "order_number": order_number,
+                    "order_type": order_type,
+                },
+                "client_reference_id": order_number,
+                "customer_creation": "always",
+            }
+
+            if customer_email:
+                session_kwargs["customer_email"] = customer_email
+
+            metadata_payload = {
+                "order_id": str(order_id),
+                "order_number": order_number,
+                "order_type": order_type,
+            }
+
+            if mode == "payment":
+                session_kwargs["payment_intent_data"] = {"metadata": metadata_payload}
+            else:
+                session_kwargs["subscription_data"] = {"metadata": metadata_payload}
+
+            try:
+                checkout_session = stripe.checkout.Session.create(**session_kwargs)
+            except Exception as err:
+                con.rollback()
+                return jsonify({"ok": False, "error": f"Stripe checkout creation failed: {err}"}), 502
+
+            payment_intent_id = checkout_session.payment_intent if mode == "payment" else None
+            checkout_session_id = checkout_session.id
+            checkout_url = checkout_session.url
+
+            if using_postgres():
+                cur.execute(
+                    """
+                    UPDATE orders
+                    SET status = %s,
+                        checkout_session_id = %s,
+                        payment_intent_id = %s,
+                        payment_link_url = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        "awaiting_payment",
+                        checkout_session_id,
+                        payment_intent_id,
+                        checkout_url,
+                        order_id,
+                    ),
+                )
+            else:
+                cur.execute(
+                    """
+                    UPDATE orders
+                    SET status = ?,
+                        checkout_session_id = ?,
+                        payment_intent_id = ?,
+                        payment_link_url = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        "awaiting_payment",
+                        checkout_session_id,
+                        payment_intent_id,
+                        checkout_url,
+                        order_id,
+                    ),
+                )
+
+            con.commit()
+
+            return jsonify(
+                {
+                    "ok": True,
+                    "order": {
+                        "id": order_id,
+                        "order_number": order_number,
+                        "status": "awaiting_payment",
+                        "currency": currency,
+                        "subtotal_cents": subtotal_cents,
+                        "tax_cents": 0,
+                        "discount_cents": 0,
+                        "tip_cents": 0,
+                        "total_cents": total_cents,
+                        "expires_at": expires_at_dt.isoformat(),
+                        "checkout_url": checkout_url,
+                        "checkout_session_id": checkout_session_id,
+                        "items": [
+                            {
+                                "product_id": item["product"]["id"],
+                                "product_name": item["product"]["name"],
+                                "price_type": item["price"]["price_type"],
+                                "quantity": item["quantity"],
+                                "unit_amount_cents": item["price"]["amount_cents"],
+                                "total_cents": item["line_total"],
+                            }
+                            for item in prepared_items
+                        ],
+                    },
+                }
+            )
+        except Exception as e:
+            try:
+                import traceback
+                print("[commerce] order creation failed:", e)
+                traceback.print_exc()
+            except Exception:
+                try:
+                    print("[commerce] order creation failed (no traceback):", e)
+                except Exception:
+                    pass
+            try:
+                con.rollback()
+            except Exception:
+                pass
+            return jsonify({"ok": False, "error": str(e)}), 500
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    @app.get("/api/commerce/orders/<int:order_id>")
+    def api_commerce_order_detail(order_id: int):
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        order = _fetch_order_detail(order_id)
+        if not order:
+            return jsonify({"ok": False, "error": "Order not found"}), 404
+        return jsonify({"ok": True, "order": order})
+
+    @app.get("/api/commerce/orders")
+    def api_commerce_orders_list():
+        if not COMMERCE_ENABLED:
+            return jsonify({"ok": False, "error": "Commerce disabled"}), 404
+        if not session.get("admin"):
+            return jsonify({"ok": False, "error": "Unauthorized"}), 401
+        try:
+            limit = int(request.args.get("limit", "10"))
+        except Exception:
+            limit = 10
+        limit = max(1, min(limit, 25))
+        orders = _fetch_recent_orders(limit)
+        return jsonify({"ok": True, "orders": orders})
+
+    @app.get("/staff/orders/<int:order_id>/qr.png")
+    def staff_order_qr(order_id: int):
+        if not COMMERCE_ENABLED:
+            abort(404)
+        if not session.get("admin"):
+            abort(401)
+        order = _fetch_order_detail(order_id)
+        if not order:
+            abort(404)
+        checkout_url = order.get("payment_link_url")
+        if not checkout_url:
+            abort(404)
+        png_bytes = generate_qr_png(checkout_url)
+        if not png_bytes:
+            abort(500)
+        return send_file(io.BytesIO(png_bytes), mimetype="image/png", download_name="order_qr.png")
+
+    @app.get("/staff/checkout/success")
+    def staff_checkout_success():
+        order_number = request.args.get("order")
+        return render_template(
+            "checkin/staff_checkout_status.html",
+            title="Payment successful",
+            message="Payment received. Thank you!",
+            subtext="Our team sees this instantly. You can close this window.",
+            status="success",
+            order_number=order_number,
+        )
+
+    @app.get("/staff/checkout/cancel")
+    def staff_checkout_cancel():
+        order_number = request.args.get("order")
+        return render_template(
+            "checkin/staff_checkout_status.html",
+            title="Checkout cancelled",
+            message="No charge was made. Feel free to try again if needed.",
+            subtext="If you ran into an issue, staff can start a new checkout in a few seconds.",
+            status="cancel",
+            order_number=order_number,
+        )
+
     # --- Staff-assisted Signup (MVP scaffold) ---
     def require_staff_signup_auth():
         if not STAFF_SIGNUP_ENABLED:
@@ -599,119 +2538,52 @@ def create_app():
 
     @app.post("/webhooks/stripe")
     def stripe_webhook():
-        # Verify signature and handle key subscription events
-        if not STAFF_SIGNUP_ENABLED:
+        if not (STAFF_SIGNUP_ENABLED or COMMERCE_ENABLED):
             return ("OK", 200)
+
         payload = request.get_data()
+        raw_body = payload.decode("utf-8", errors="ignore")
         sig = request.headers.get("Stripe-Signature", "")
         secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
+
         try:
             import stripe
             if not secret:
-                # If not configured, acknowledge to avoid retries during scaffold
                 return ("OK", 200)
             event = stripe.Webhook.construct_event(payload, sig, secret)
         except Exception:
             return ("Bad signature", 400)
 
-        try:
-            if event and event.get("type") == "checkout.session.completed":
-                sess = event["data"]["object"]
-                stripe.api_key = os.environ.get("STRIPE_API_KEY")
-                # Retrieve full session with line items
-                session_id = sess.get("id")
-                try:
-                    sess_full = stripe.checkout.Session.retrieve(session_id, expand=["line_items", "customer", "subscription"])
-                except Exception:
-                    sess_full = sess
-                cust = sess_full.get("customer") if isinstance(sess_full.get("customer"), dict) else None
-                customer_id = (cust.get("id") if cust else sess_full.get("customer"))
-                customer_email = None
-                if sess_full.get("customer_details"):
-                    customer_email = sess_full["customer_details"].get("email")
-                if not customer_email:
-                    customer_email = sess_full.get("customer_email") or (sess_full.get("metadata") or {}).get("app_member_email")
-                customer_name = (sess_full.get("metadata") or {}).get("app_member_name")
+        stripe_api_key = os.environ.get("STRIPE_API_KEY")
+        if stripe_api_key:
+            try:
+                import stripe
+                stripe.api_key = stripe_api_key
+            except Exception:
+                pass
 
-                # Extract price and subscription ids
-                price_id = None
-                if sess_full.get("line_items") and sess_full["line_items"].get("data"):
-                    li = sess_full["line_items"]["data"][0]
-                    if li.get("price"):
-                        price_id = li["price"].get("id")
-                subscription_id = sess_full.get("subscription") if isinstance(sess_full.get("subscription"), str) else (sess_full.get("subscription") or {}).get("id")
+        event_type = event.get("type", "")
+        obj = (event.get("data") or {}).get("object") or {}
+        handled = False
 
-                # Upsert member and membership
-                if customer_email:
-                    email_n = normalize_email(customer_email)
-                    name = customer_name or (cust.get("name") if cust else None) or "Member"
-                    phone = (cust.get("phone") if cust else None)
-                    con = connect_db(); cur = con.cursor()
-                    # Find existing member by email
-                    if using_postgres():
-                        cur.execute("SELECT id FROM members WHERE email_lower = %s LIMIT 1", (email_n,))
-                    else:
-                        cur.execute("SELECT id FROM members WHERE email_lower = ? LIMIT 1", (email_n,))
-                    row = cur.fetchone()
-                    if row:
-                        member_id = row[0] if isinstance(row, (list, tuple)) else (row.get("id") if isinstance(row, dict) else row[0])
-                        # Update basic fields + stripe_customer_id
-                        if using_postgres():
-                            cur.execute("UPDATE members SET name=%s, phone_e164=%s, stripe_customer_id=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (name, normalize_phone(phone), customer_id, member_id))
-                        else:
-                            cur.execute("UPDATE members SET name=?, phone_e164=?, stripe_customer_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (name, normalize_phone(phone), customer_id, member_id))
-                    else:
-                        # Insert new member
-                        if using_postgres():
-                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (%s,%s,%s,'active',%s) RETURNING id", (name, email_n, normalize_phone(phone), customer_id))
-                            member_id = cur.fetchone()[0]
-                        else:
-                            cur.execute("INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id) VALUES (?,?,?,?,?)", (name, email_n, normalize_phone(phone), 'active', customer_id))
-                            member_id = cur.lastrowid
+        if COMMERCE_ENABLED:
+            if event_type == "checkout.session.completed":
+                handled = _handle_commerce_checkout_completed(obj, raw_body)
+            elif event_type == "checkout.session.expired":
+                handled = _handle_commerce_checkout_expired(obj)
+            elif event_type == "payment_intent.succeeded":
+                handled = _handle_commerce_payment_intent(obj, "succeeded", raw_body)
+            elif event_type == "payment_intent.payment_failed":
+                handled = _handle_commerce_payment_intent(obj, "failed", raw_body)
 
-                    # Ensure QR token
-                    if using_postgres():
-                        cur.execute("SELECT qr_token FROM members WHERE id=%s", (member_id,))
-                    else:
-                        cur.execute("SELECT qr_token FROM members WHERE id=?", (member_id,))
-                    tokrow = cur.fetchone()
-                    token = (tokrow[0] if isinstance(tokrow, (list, tuple)) else (tokrow.get("qr_token") if tokrow else None)) if tokrow else None
-                    if not token:
-                        token = secrets.token_urlsafe(24)
-                        if using_postgres():
-                            cur.execute("UPDATE members SET qr_token=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s", (token, member_id))
-                        else:
-                            cur.execute("UPDATE members SET qr_token=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (token, member_id))
+        if not handled and STAFF_SIGNUP_ENABLED and event_type == "checkout.session.completed":
+            try:
+                import stripe
+                _handle_signup_checkout_session(obj, stripe)
+            except Exception:
+                pass
 
-                    # Upsert membership (if table exists)
-                    try:
-                        if using_postgres():
-                            cur.execute("SELECT 1 FROM memberships WHERE member_id=%s LIMIT 1", (member_id,))
-                        else:
-                            cur.execute("SELECT 1 FROM memberships WHERE member_id=? LIMIT 1", (member_id,))
-                        exists = cur.fetchone() is not None
-                        if exists:
-                            if using_postgres():
-                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=%s, price_id=%s, status='active', last_seen_at=NOW() WHERE member_id=%s", (subscription_id, price_id, member_id))
-                            else:
-                                cur.execute("UPDATE memberships SET provider='stripe', stripe_subscription_id=?, price_id=?, status='active', last_seen_at=CURRENT_TIMESTAMP WHERE member_id=?", (subscription_id, price_id, member_id))
-                        else:
-                            if using_postgres():
-                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (%s,'stripe',%s,%s,'active',CURRENT_DATE, NOW())", (member_id, subscription_id, price_id))
-                            else:
-                                cur.execute("INSERT INTO memberships(member_id, provider, stripe_subscription_id, price_id, status, start_date, last_seen_at) VALUES (?,?,?,?, 'active', date('now'), CURRENT_TIMESTAMP)", (member_id, 'stripe', subscription_id, price_id))
-                    except Exception:
-                        # memberships table may not exist; ignore gracefully
-                        pass
-
-                    con.commit(); con.close()
-
-                    # Send QR email
-                    send_email(customer_email, "Your Atlas Gym Check-In Code", (
-                        f"Hi {name},\n\nYour membership is active. Open your QR code here:\n{request.url_root.rstrip('/')}/member/qr?token={token}\n\nSee you at Atlas!\n\nRadical simplicity. Transparent affordability."))
-            return ("OK", 200)
-        except Exception:
-            return ("OK", 200)
+        return ("OK", 200)
 
     # --- Signup success/cancel placeholders ---
     @app.get("/join/success")
@@ -857,7 +2729,6 @@ def create_app():
             messages = [
                 {"label": headline, "subtext": detail, "level": level},
                 {"label": "So far today", "subtext": f"{int(today_total or 0)} check-ins logged."},
-                {"label": "Personal training", "subtext": "Ask the front desk about our 4-week starter pack."},
             ]
 
             con.close()
@@ -901,10 +2772,9 @@ def create_app():
         if status in ("active","inactive"):
             where.append("m.status = %s" if using_postgres() else "m.status = ?")
             params.append(status)
-        # Tier from memberships if available; else skip filter
-        tier_join = "LEFT JOIN memberships ms ON ms.member_id = m.id AND ms.status='active'"
+        tier_join = ""
         if tier in ("essential","elevated","elite"):
-            where.append("(ms.tier = %s)" if using_postgres() else "(ms.tier = ?)")
+            where.append("(m.membership_tier = %s)" if using_postgres() else "(m.membership_tier = ?)")
             params.append(tier)
         base = f"""
             FROM members m
@@ -912,17 +2782,26 @@ def create_app():
             WHERE {' AND '.join(where)}
         """
         # total
-        cur.execute(("SELECT COUNT(*) "+base) if using_postgres() else ("SELECT COUNT(*) "+base), tuple(params))
+        count_sql = "SELECT COUNT(*) AS total_count " + base
+        cur.execute(count_sql, tuple(params))
         total_row = cur.fetchone()
-        total = total_row[0] if isinstance(total_row, (list, tuple)) else (total_row.get('count') if total_row else 0)
+        if isinstance(total_row, (list, tuple)):
+            total = total_row[0]
+        elif total_row:
+            total = total_row.get('total_count') or total_row.get('?column?') or 0
+        else:
+            total = 0
         # page
         offset = (page-1)*per_page
-        order = "ORDER BY m.name ASC"
+        if using_postgres():
+            order = "ORDER BY lower(regexp_replace(m.name, '^.*\\s+', '')) ASC, lower(m.name) ASC"
+        else:
+            order = "ORDER BY lower(CASE WHEN instr(trim(m.name), ' ') > 0 THEN substr(trim(m.name), instr(trim(m.name), ' ') + 1) ELSE trim(m.name) END) ASC, lower(m.name) ASC"
         if using_postgres():
             cur.execute(
                 f"""
                 SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, to_char(m.updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at,
-                       ms.tier
+                       m.membership_tier
                 {base}
                 {order}
                 LIMIT %s OFFSET %s
@@ -933,7 +2812,7 @@ def create_app():
             cur.execute(
                 f"""
                 SELECT m.id, m.name, m.email_lower, m.phone_e164, m.status, m.updated_at AS updated_at,
-                       ms.tier
+                       m.membership_tier
                 {base}
                 {order}
                 LIMIT ? OFFSET ?
@@ -946,7 +2825,7 @@ def create_app():
                 items.append({
                     "id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
                     "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at"),
-                    "tier": r.get("tier"),
+                    "tier": r.get("membership_tier"),
                 })
             else:
                 items.append({
@@ -980,8 +2859,8 @@ def create_app():
         # member row
         try:
             cur.execute(
-                ("SELECT id, name, email_lower, phone_e164, status, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
-                 "SELECT id, name, email_lower, phone_e164, status, updated_at FROM members WHERE id=?"),
+                ("SELECT id, name, email_lower, phone_e164, status, membership_tier, to_char(updated_at, 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM members WHERE id=%s" if using_postgres() else
+                 "SELECT id, name, email_lower, phone_e164, status, membership_tier, updated_at FROM members WHERE id=?"),
                 (member_id,)
             )
             r = cur.fetchone()
@@ -989,21 +2868,11 @@ def create_app():
                 con.close(); return jsonify({"ok": False, "error": "Not found"}), 404
             if using_postgres():
                 member = {"id": r.get("id"), "name": r.get("name"), "email_lower": r.get("email_lower"),
-                          "phone_e164": r.get("phone_e164"), "status": r.get("status"), "updated_at": r.get("updated_at")}
+                          "phone_e164": r.get("phone_e164"), "status": r.get("status"),
+                          "tier": r.get("membership_tier"), "updated_at": r.get("updated_at")}
             else:
-                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4], "updated_at": r[5]}
-            # tier via memberships if available
-            try:
-                cur.execute(
-                    ("SELECT tier FROM memberships WHERE member_id=%s AND status='active' LIMIT 1" if using_postgres() else
-                     "SELECT tier FROM memberships WHERE member_id=? AND status='active' LIMIT 1"),
-                    (member_id,)
-                )
-                tr = cur.fetchone()
-                if tr:
-                    member["tier"] = (tr.get("tier") if using_postgres() else tr[0])
-            except Exception:
-                member["tier"] = None
+                member = {"id": r[0], "name": r[1], "email_lower": r[2], "phone_e164": r[3], "status": r[4],
+                          "tier": r[5], "updated_at": r[6]}
             # recent check-ins
             cur.execute(
                 ("SELECT timestamp, method FROM check_ins WHERE member_id=%s ORDER BY timestamp DESC LIMIT 10" if using_postgres() else
@@ -1409,7 +3278,7 @@ def create_app():
             f"Open link: {link}\n"
             f"{wallet_text}"
             f"- The Atlas Gym Team\n"
-            f"Radical simplicity. Transparent affordability."
+            f"GymSense — Your gym operations, simplified."
         )
         body_html = f"""
 <!doctype html>
