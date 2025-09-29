@@ -913,7 +913,8 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
                             """,
                             (default_name, email_normalized, phone_norm, stripe_customer_id, now_utc),
                         )
-                        guest_id_for_order = cur.fetchone()[0]
+                        guest_row_insert = cur.fetchone()
+                        guest_id_for_order = _coalesce_row_value(guest_row_insert, "id") if guest_row_insert else None
                     else:
                         cur.execute(
                             """
@@ -1415,12 +1416,11 @@ def _fetch_recent_orders(limit: int = 10) -> list:
                 first_items[order_id] = summary
 
         for order in orders:
-            summary = first_items.get(order["id"]) or order.get("order_number")
+            product_summary = first_items.get(order["id"]) or order.get("order_number")
+            order["product_summary"] = product_summary
             guest = order.get("guest_name") or order.get("guest_email")
             if guest:
-                order["summary"] = guest
-            else:
-                order["summary"] = summary
+                order["guest_display"] = guest
 
         return orders
     finally:

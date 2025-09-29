@@ -396,10 +396,11 @@
     }
     orderList.innerHTML = visible.map(order => {
       const when = order.created_at ? formatRelative(order.created_at) : '';
-      const guest = order.guest_name || order.guest_email;
+      const guest = order.guest_display || order.guest_name || order.guest_email || '';
+      const title = order.product_summary || order.order_number;
       return `
         <li class="order-card">
-          <div class="title">${escapeHtml(order.summary || order.order_number)}</div>
+          <div class="title">${escapeHtml(title)}</div>
           <div class="row">
             <span class="status-pill ${order.status}">${statusLabel(order.status)}</span>
             <span>${currencyFmt.format((order.total_cents || 0) / 100)}</span>
