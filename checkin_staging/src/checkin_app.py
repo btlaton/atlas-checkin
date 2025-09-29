@@ -845,8 +845,10 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
             )
 
         member_id_for_order = None
+        guest_id_for_order = None
         email_normalized = normalize_email(customer_email)
         guest_name_value = customer_name.strip() if customer_name and customer_name.strip() else None
+        phone_norm = normalize_phone(customer_phone)
         if email_normalized:
             if using_postgres():
                 cur.execute("SELECT id, stripe_customer_id, name FROM members WHERE email_lower = %s LIMIT 1", (email_normalized,))
@@ -867,38 +869,65 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
                         cur.execute("UPDATE members SET name = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (customer_name.strip(), member_id_for_order))
                     else:
                         cur.execute("UPDATE members SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (customer_name.strip(), member_id_for_order))
-                if customer_phone:
-                    phone_norm = normalize_phone(customer_phone)
-                    if phone_norm:
-                        if using_postgres():
-                            cur.execute("UPDATE members SET phone_e164 = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (phone_norm, member_id_for_order))
-                        else:
-                            cur.execute("UPDATE members SET phone_e164 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (phone_norm, member_id_for_order))
+                if phone_norm:
+                    if using_postgres():
+                        cur.execute("UPDATE members SET phone_e164 = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s", (phone_norm, member_id_for_order))
+                    else:
+                        cur.execute("UPDATE members SET phone_e164 = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (phone_norm, member_id_for_order))
             else:
-                default_name = (customer_name or email_normalized.split('@')[0].replace('.', ' ').title() or 'Guest').strip()
-                guest_name_value = guest_name_value or default_name
-                phone_norm = normalize_phone(customer_phone)
-                qr_token = secrets.token_urlsafe(24)
                 if using_postgres():
-                    cur.execute(
-                        """
-                        INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id, qr_token)
-                        VALUES (%s, %s, %s, 'active', %s, %s)
-                        RETURNING id
-                        """,
-                        (default_name, email_normalized, phone_norm, stripe_customer_id, qr_token),
-                    )
-                    member_id_for_order = cur.fetchone()[0]
+                    cur.execute("SELECT id, stripe_customer_id, name, phone_e164 FROM guests WHERE email_lower = %s LIMIT 1", (email_normalized,))
                 else:
-                    cur.execute(
-                        """
-                        INSERT INTO members(name, email_lower, phone_e164, status, stripe_customer_id, qr_token)
-                        VALUES (?, ?, ?, 'active', ?, ?)
-                        """,
-                        (default_name, email_normalized, phone_norm, stripe_customer_id, qr_token),
-                    )
-                    member_id_for_order = cur.lastrowid
-
+                    cur.execute("SELECT id, stripe_customer_id, name, phone_e164 FROM guests WHERE email_lower = ? LIMIT 1", (email_normalized,))
+                guest_row = cur.fetchone()
+                if guest_row:
+                    guest_id_for_order = _coalesce_row_value(guest_row, "id")
+                    existing_guest_customer = _coalesce_row_value(guest_row, "stripe_customer_id")
+                    existing_guest_name = _coalesce_row_value(guest_row, "name")
+                    existing_guest_phone = _coalesce_row_value(guest_row, "phone_e164")
+                    guest_name_value = guest_name_value or existing_guest_name
+                    if stripe_customer_id and stripe_customer_id != existing_guest_customer:
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET stripe_customer_id = %s WHERE id = %s", (stripe_customer_id, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET stripe_customer_id = ? WHERE id = ?", (stripe_customer_id, guest_id_for_order))
+                    if guest_name_value and guest_name_value != (existing_guest_name or ''):
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET name = %s WHERE id = %s", (guest_name_value, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET name = ? WHERE id = ?", (guest_name_value, guest_id_for_order))
+                    if phone_norm and phone_norm != (existing_guest_phone or ''):
+                        if using_postgres():
+                            cur.execute("UPDATE guests SET phone_e164 = %s WHERE id = %s", (phone_norm, guest_id_for_order))
+                        else:
+                            cur.execute("UPDATE guests SET phone_e164 = ? WHERE id = ?", (phone_norm, guest_id_for_order))
+                else:
+                    default_name = guest_name_value or (email_normalized.split('@')[0].replace('.', ' ').title() if email_normalized else 'Guest')
+                    guest_name_value = default_name
+                    if using_postgres():
+                        cur.execute(
+                            """
+                            INSERT INTO guests(name, email_lower, phone_e164, stripe_customer_id, last_order_at)
+                            VALUES (%s, %s, %s, %s, %s)
+                            RETURNING id
+                            """,
+                            (default_name, email_normalized, phone_norm, stripe_customer_id, now_utc),
+                        )
+                        guest_id_for_order = cur.fetchone()[0]
+                    else:
+                        cur.execute(
+                            """
+                            INSERT INTO guests(name, email_lower, phone_e164, stripe_customer_id, last_order_at)
+                            VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (default_name, email_normalized, phone_norm, stripe_customer_id, now_utc.isoformat()),
+                        )
+                        guest_id_for_order = cur.lastrowid
+                if guest_id_for_order:
+                    if using_postgres():
+                        cur.execute("UPDATE guests SET last_order_at = %s WHERE id = %s", (now_utc, guest_id_for_order))
+                    else:
+                        cur.execute("UPDATE guests SET last_order_at = ? WHERE id = ?", (now_utc.isoformat(), guest_id_for_order))
         update_fields = []
         params = []
         if guest_name_value:
@@ -910,6 +939,9 @@ def _handle_commerce_checkout_completed(session_obj: dict, raw_payload: str) -> 
         if member_id_for_order:
             update_fields.append("member_id = {}".format('%s' if using_postgres() else '?'))
             params.append(member_id_for_order)
+        if guest_id_for_order:
+            update_fields.append("guest_id = {}".format('%s' if using_postgres() else '?'))
+            params.append(guest_id_for_order)
         if update_fields:
             if using_postgres():
                 cur.execute(
@@ -1192,6 +1224,7 @@ def _serialize_order_row(row) -> dict:
         "tip_cents": int(_coalesce_row_value(row, "tip_cents") or 0),
         "total_cents": int(_coalesce_row_value(row, "total_cents") or 0),
         "notes": _coalesce_row_value(row, "notes"),
+        "guest_id": _coalesce_row_value(row, "guest_id"),
         "guest_name": _coalesce_row_value(row, "guest_name"),
         "guest_email": _coalesce_row_value(row, "guest_email"),
         "member_id": _coalesce_row_value(row, "member_id"),
@@ -1211,24 +1244,28 @@ def _fetch_order_detail(order_id: int) -> dict | None:
         if using_postgres():
             cur.execute(
                 """
-                SELECT id, order_number, status, currency, subtotal_cents, tax_cents, discount_cents,
-                       tip_cents, total_cents, notes, guest_name, guest_email, member_id,
-                       checkout_session_id, payment_intent_id,
-                       payment_link_url, expires_at, paid_at, canceled_at, created_at
-                  FROM orders
-                 WHERE id = %s
+                SELECT o.id, o.order_number, o.status, o.currency, o.subtotal_cents, o.tax_cents, o.discount_cents,
+                       o.tip_cents, o.total_cents, o.notes, o.guest_name, o.guest_email, o.member_id, o.guest_id,
+                       o.checkout_session_id, o.payment_intent_id, o.payment_link_url, o.expires_at, o.paid_at,
+                       o.canceled_at, o.created_at,
+                       g.name AS guest_lookup_name, g.email_lower AS guest_lookup_email, g.phone_e164 AS guest_lookup_phone
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.id = %s
                 """,
                 (order_id,),
             )
         else:
             cur.execute(
                 """
-                SELECT id, order_number, status, currency, subtotal_cents, tax_cents, discount_cents,
-                       tip_cents, total_cents, notes, guest_name, guest_email, member_id,
-                       checkout_session_id, payment_intent_id,
-                       payment_link_url, expires_at, paid_at, canceled_at, created_at
-                  FROM orders
-                 WHERE id = ?
+                SELECT o.id, o.order_number, o.status, o.currency, o.subtotal_cents, o.tax_cents, o.discount_cents,
+                       o.tip_cents, o.total_cents, o.notes, o.guest_name, o.guest_email, o.member_id, o.guest_id,
+                       o.checkout_session_id, o.payment_intent_id, o.payment_link_url, o.expires_at, o.paid_at,
+                       o.canceled_at, o.created_at,
+                       g.name AS guest_lookup_name, g.email_lower AS guest_lookup_email, g.phone_e164 AS guest_lookup_phone
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.id = ?
                 """,
                 (order_id,),
             )
@@ -1236,6 +1273,15 @@ def _fetch_order_detail(order_id: int) -> dict | None:
         if not row:
             return None
         order = _serialize_order_row(row)
+        guest_lookup_name = _coalesce_row_value(row, "guest_lookup_name")
+        guest_lookup_email = _coalesce_row_value(row, "guest_lookup_email")
+        guest_lookup_phone = _coalesce_row_value(row, "guest_lookup_phone")
+        if guest_lookup_name and not order.get("guest_name"):
+            order["guest_name"] = guest_lookup_name
+        if guest_lookup_email and not order.get("guest_email"):
+            order["guest_email"] = guest_lookup_email
+        if guest_lookup_phone:
+            order["guest_phone"] = guest_lookup_phone
 
         if using_postgres():
             cur.execute(
@@ -1291,10 +1337,12 @@ def _fetch_recent_orders(limit: int = 10) -> list:
         if using_postgres():
             cur.execute(
                 """
-                SELECT id, order_number, status, total_cents, currency, created_at, guest_name, guest_email
-                  FROM orders
-                 WHERE status IS DISTINCT FROM 'awaiting_payment'
-                 ORDER BY created_at DESC
+                SELECT o.id, o.order_number, o.status, o.total_cents, o.currency, o.created_at,
+                       o.guest_name, o.guest_email, o.guest_id, g.name AS guest_lookup_name
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.status IS DISTINCT FROM 'awaiting_payment'
+                 ORDER BY o.created_at DESC
                  LIMIT %s
                 """,
                 (limit,),
@@ -1302,10 +1350,12 @@ def _fetch_recent_orders(limit: int = 10) -> list:
         else:
             cur.execute(
                 """
-                SELECT id, order_number, status, total_cents, currency, created_at, guest_name, guest_email
-                  FROM orders
-                 WHERE status != 'awaiting_payment'
-                 ORDER BY created_at DESC
+                SELECT o.id, o.order_number, o.status, o.total_cents, o.currency, o.created_at,
+                       o.guest_name, o.guest_email, o.guest_id, g.name AS guest_lookup_name
+                  FROM orders o
+                  LEFT JOIN guests g ON g.id = o.guest_id
+                 WHERE o.status != 'awaiting_payment'
+                 ORDER BY o.created_at DESC
                  LIMIT ?
                 """,
                 (limit,),
@@ -1324,6 +1374,7 @@ def _fetch_recent_orders(limit: int = 10) -> list:
             }
             order["guest_name"] = _coalesce_row_value(row, "guest_name")
             order["guest_email"] = _coalesce_row_value(row, "guest_email")
+            order["guest_name"] = order.get("guest_name") or _coalesce_row_value(row, "guest_lookup_name")
             orders.append(order)
             order_ids.append(order["id"])
         if not order_ids:
